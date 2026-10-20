@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { User, Mail, Phone, Lock, FileText, CheckCircle2, Clock, Trash2, LogOut, Camera, ShieldCheck, Check, AlertTriangle, X } from 'lucide-react';
 
 import { useAuth } from '../auth.jsx';
+import { supabase } from '../lib/supabase.js';
 import { listMyComplaints } from '../api.js';
 
 /**
@@ -39,10 +40,10 @@ export default function ProfilePage() {
     return parts.slice(1).join(' ') || '';
   });
 
-  // All other fields blank by default unless user sets them
-  const [rollNumber, setRollNumber] = useState(() => localStorage.getItem('cl_roll') || '');
-  const [hostel, setHostel] = useState(() => localStorage.getItem('cl_hostel') || '');
-  const [phone, setPhone] = useState(() => localStorage.getItem('cl_phone') || '');
+  // All other fields initialize from storage or cloud user metadata
+  const [rollNumber, setRollNumber] = useState(() => localStorage.getItem('cl_roll') || user?.user_metadata?.roll_number || '');
+  const [hostel, setHostel] = useState(() => localStorage.getItem('cl_hostel') || user?.user_metadata?.hostel || '');
+  const [phone, setPhone] = useState(() => localStorage.getItem('cl_phone') || user?.user_metadata?.phone || '');
 
   // Preferences toggles: all default to false (off) unless explicitly enabled
   const [twoFactor, setTwoFactor] = useState(() => localStorage.getItem('cl_pref_2fa') === 'true');
@@ -74,14 +75,52 @@ export default function ProfilePage() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
 
-  function handleSave(e) {
+  // Synchronize cloud profile metadata across devices
+  useEffect(() => {
+    if (user?.user_metadata) {
+      const meta = user.user_metadata;
+      if (meta.full_name && !localStorage.getItem('cl_first_name')) {
+        const parts = meta.full_name.trim().split(/\s+/);
+        setFirstName(parts[0] || '');
+        setLastName(parts.slice(1).join(' ') || '');
+      }
+      if (meta.roll_number && !localStorage.getItem('cl_roll')) {
+        setRollNumber(meta.roll_number);
+      }
+      if (meta.hostel && !localStorage.getItem('cl_hostel')) {
+        setHostel(meta.hostel);
+      }
+      if (meta.phone && !localStorage.getItem('cl_phone')) {
+        setPhone(meta.phone);
+      }
+    }
+  }, [user]);
+
+  async function handleSave(e) {
     e.preventDefault();
     localStorage.setItem('cl_first_name', firstName);
     localStorage.setItem('cl_last_name', lastName);
-    localStorage.setItem('cl_user_name', `${firstName} ${lastName}`.trim());
+    const fullName = `${firstName} ${lastName}`.trim();
+    localStorage.setItem('cl_user_name', fullName);
     localStorage.setItem('cl_roll', rollNumber);
     localStorage.setItem('cl_hostel', hostel);
     localStorage.setItem('cl_phone', phone);
+
+    if (supabase) {
+      try {
+        await supabase.auth.updateUser({
+          data: {
+            full_name: fullName,
+            roll_number: rollNumber,
+            hostel: hostel,
+            phone: phone,
+          },
+        });
+      } catch (err) {
+        console.warn('Could not sync user profile metadata to cloud:', err);
+      }
+    }
+
     setSavedSuccess(true);
     setTimeout(() => setSavedSuccess(false), 3000);
   }
