@@ -1,0 +1,17 @@
+{
+  "notice": "Synthetic demo records only. Do not present as real campus reports.",
+  "complaints": [
+    {"demo_id":"electrical-01","description":"Electrical socket is producing sparks in a lecture hall.","location":"Hall 12 lecture hall","category":"Electrical","duplicate_group_id":"demo-electrical-1"},
+    {"demo_id":"electrical-02","description":"Socket near the podium is sparking intermittently.","location":"Hall 12 lecture hall","category":"Electrical","duplicate_group_id":"demo-electrical-1"},
+    {"demo_id":"water-01","description":"No water available on the third floor of Hostel X.","location":"Hostel X third floor","category":"Plumbing","duplicate_group_id":"demo-water-1"},
+    {"demo_id":"water-02","description":"Water supply in X hostel has stopped again.","location":"Hostel X third floor","category":"Plumbing","duplicate_group_id":"demo-water-1"},
+    {"demo_id":"water-03","description":"Hostel X water line is not working.","location":"Hostel X","category":"Plumbing","duplicate_group_id":"demo-water-1"},
+    {"demo_id":"wifi-01","description":"WiFi is unavailable across the residential block.","location":"Hostel Y residential block","category":"WiFi/IT"},
+    {"demo_id":"electrical-03","description":"Ceiling fan stopped working during class.","location":"Hall 12 A507","category":"Electrical"},
+    {"demo_id":"furniture-01","description":"One chair is broken in a classroom.","location":"Academic Block room 204","category":"Furniture"},
+    {"demo_id":"cleanliness-01","description":"Garbage has not been collected near the dining area.","location":"North dining hall","category":"Cleanliness"},
+    {"demo_id":"infrastructure-01","description":"Loose stair railing is moving when students use it.","location":"Library east stairs","category":"Infrastructure"},
+    {"demo_id":"other-01","description":"Something is broken in Hall 12.","location":"Hall 12","category":"Other","human_review_required":true},
+    {"demo_id":"academic-01","description":"The classroom projector was repaired and the room is available.","location":"Academic Block room 101","category":"Academic Facilities","status":"Resolved"}
+  ]
+}

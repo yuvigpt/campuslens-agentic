@@ -1,0 +1,235 @@
+@import "tailwindcss";
+
+/* ============================================================================
+   CampusLens design system
+   ----------------------------------------------------------------------------
+   1. @theme      - motion tokens: every `animate-*` utility used across the
+                    app is declared here (Tailwind v4 generates the utility
+                    from the --animate-* variable).
+   2. @keyframes  - top level so they are always emitted, whether referenced
+                    by an `animate-*` utility or by a component class below.
+   3. Component classes (.text-gradient, .card-lift, .skeleton, ...) live
+                    outside @layer so they beat plain utilities where they
+                    intentionally override them (e.g. a card's hover shadow).
+   4. Reduced motion: one media query neutralises every animation and
+                    transition for users who ask for less motion.
+   ========================================================================== */
+
+@theme {
+  /* Fonts: Inter from Google Fonts with a safe system fallback (index.html). */
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+    Roboto, "Helvetica Neue", Arial, sans-serif;
+
+  /* ---- Motion tokens (animate-fade-up, animate-pop, ...) ---- */
+  --animate-fade-in: cl-fade-in 0.5s ease-out backwards;
+  --animate-fade-up: cl-fade-up 0.55s cubic-bezier(0.22, 0.8, 0.28, 1) backwards;
+  --animate-scale-in: cl-scale-in 0.4s cubic-bezier(0.2, 0.9, 0.3, 1.35) backwards;
+  --animate-pop: cl-pop 0.6s cubic-bezier(0.2, 0.9, 0.3, 1.45) backwards;
+  --animate-shimmer: cl-shimmer 1.5s linear infinite;
+  --animate-float: cl-float 9s ease-in-out infinite;
+  --animate-glow: cl-glow 2.8s ease-in-out infinite;
+  --animate-ping-slow: cl-ping-slow 2.4s cubic-bezier(0, 0, 0.2, 1) infinite;
+  --animate-slide-down: cl-slide-down 0.35s cubic-bezier(0.16, 1, 0.3, 1) backwards;
+  --animate-slide-right: cl-slide-right 0.38s cubic-bezier(0.16, 1, 0.3, 1) backwards;
+}
+
+/* ---- Keyframes ---------------------------------------------------------- */
+
+@keyframes cl-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes cl-fade-up {
+  from { opacity: 0; transform: translateY(18px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes cl-scale-in {
+  from { opacity: 0; transform: scale(0.94); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes cl-pop {
+  0% { opacity: 0; transform: scale(0.4); }
+  60% { opacity: 1; transform: scale(1.14); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
+@keyframes cl-shimmer {
+  from { background-position: 200% 0; }
+  to { background-position: -200% 0; }
+}
+
+@keyframes cl-float {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  50% { transform: translate3d(0, -28px, 0) scale(1.04); }
+}
+
+@keyframes cl-glow {
+  0%, 100% { opacity: 0.55; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.08); }
+}
+
+@keyframes cl-ping-slow {
+  0% { transform: scale(1); opacity: 0.7; }
+  80%, 100% { transform: scale(2.1); opacity: 0; }
+}
+
+@keyframes cl-slide-down {
+  from { opacity: 0; transform: translateY(-20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes cl-slide-right {
+  from { opacity: 0; transform: translateX(-100%); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+
+/* Grows an element from 0 to its own (inline) width - score and analytics
+   bars. `backwards` keeps the final value owned by the element, so a later
+   width change (score confirmed) still transitions normally. */
+@keyframes cl-bar-grow {
+  from { width: 0; }
+}
+
+/* ---- Base ---------------------------------------------------------------- */
+
+:root {
+  /* Keep some of the semantic colors as CSS variables for easy reference if needed, 
+     but we will use Tailwind utility classes directly for everything else. */
+  --critical: #d92d20;
+  --high: #e8590c;
+  --medium: #ca8a04;
+  --low: #16a34a;
+  --unscored: #64748b;
+  --reported: #475569;
+  --progress: #2563eb;
+  --resolved: #16a34a;
+}
+
+body {
+  background-color: #f8fafc;
+  color: #0f172a;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+::selection {
+  background: rgb(99 102 241 / 0.25);
+}
+
+/* Custom scrollbar for better look */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background-color: #cbd5e1;
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background-color: #94a3b8;
+}
+
+/* ---- Component classes -------------------------------------------------- */
+
+/* Indigo -> violet -> rose gradient text for eyebrows, brand and emphasis. */
+.text-gradient {
+  background-image: linear-gradient(
+    100deg,
+    #4f46e5 0%,
+    #7c3aed 45%,
+    #db2777 100%
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* Signature gradient button: lifts on hover, presses on click. Composes with
+   the usual Tailwind extras (items-center gap-2, disabled:*, ...). */
+.btn-gradient {
+  background-image: linear-gradient(100deg, #4f46e5 0%, #6d28d9 100%);
+  color: #fff;
+  box-shadow: 0 10px 22px -10px rgb(79 70 229 / 0.55);
+  transition:
+    translate 0.2s ease,
+    box-shadow 0.2s ease,
+    filter 0.2s ease;
+}
+.btn-gradient:hover {
+  filter: brightness(1.1);
+  translate: 0 -2px;
+  box-shadow: 0 14px 28px -10px rgb(91 33 182 / 0.5);
+}
+.btn-gradient:active {
+  translate: 0 0;
+}
+.btn-gradient:disabled {
+  box-shadow: none;
+  translate: 0 0;
+}
+
+/* Hover-lift for cards. Uses the individual `translate` property (not
+   `transform`) so it never fights the entrance animations, which own
+   `transform`. */
+.card-lift {
+  transition:
+    translate 0.3s cubic-bezier(0.22, 0.8, 0.28, 1),
+    box-shadow 0.3s ease,
+    border-color 0.3s ease;
+}
+.card-lift:hover,
+.card-lift:focus-within {
+  translate: 0 -6px;
+  box-shadow: 0 18px 40px -18px rgb(79 70 229 / 0.35);
+  border-color: rgb(199 210 254);
+}
+
+/* Loading skeleton with a travelling sheen instead of a flat pulse. */
+.skeleton {
+  background-image: linear-gradient(
+    100deg,
+    #e2e8f0 30%,
+    #f8fafc 45%,
+    #e2e8f0 60%
+  );
+  background-size: 300% 100%;
+  animation: cl-shimmer 1.5s ease-in-out infinite;
+}
+
+/* Analytics / score bars grow from zero when they enter the page. */
+.bar-grow {
+  animation: cl-bar-grow 0.9s cubic-bezier(0.22, 0.8, 0.28, 1) backwards;
+}
+
+/* ---- Reduced motion ----------------------------------------------------- */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Accessible focus visible outlines for keyboard navigation (WCAG 2.1 AA) */
+:focus-visible {
+  outline: 2px solid #6366f1;
+  outline-offset: 2px;
+}
+
+/* Guard against mobile horizontal overflow */
+html,
+body {
+  max-width: 100vw;
+  overflow-x: hidden;
+}
