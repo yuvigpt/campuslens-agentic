@@ -90,7 +90,9 @@ function authHeaders(token) {
 
 async function request(path, { token = null, ...options } = {}) {
   let response;
-  const isTest = typeof process !== 'undefined' && process.env?.NODE_ENV === 'test';
+  const isTest =
+    import.meta.env?.MODE === 'test' ||
+    (typeof process !== 'undefined' && process.env?.NODE_ENV === 'test');
   const maxRetries = isTest ? 0 : 3;
 
   let lastFetchError = null;

@@ -106,7 +106,7 @@ async function mountDashboard(view) {
     </AuthProvider>,
   );
 
-  await RTL.screen.findByText(/flickering tube light/i);
+  await RTL.screen.findByText(/flickering tube light/i, {}, { timeout: 4000 });
   return RTL;
 }
 

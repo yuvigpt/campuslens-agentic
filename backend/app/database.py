@@ -712,6 +712,19 @@ def persist_agentic_run(
                     step.get("error"),
                 ),
             )
+
+        if result.get("priority_score") is not None:
+            try:
+                conn.execute(
+                    "SELECT public.store_agentic_score(%s, %s::numeric, %s::jsonb)",
+                    (
+                        complaint_id,
+                        float(result.get("priority_score")),
+                        json.dumps(result.get("priority_breakdown") or {}, default=str),
+                    ),
+                )
+            except Exception:
+                logger.warning("could not sync agentic score to complaint %s", complaint_id, exc_info=True)
     except Exception:
         logger.warning("could not persist agentic run for %s", complaint_id, exc_info=True)
         return False

@@ -868,25 +868,11 @@ function DetailDrawer({ complaint, token, onClose, onRefresh, onDeleted }) {
     return run('score', () => confirmAnalysis(complaint.id, scoreInputs, token), 'Priority score confirmed and recomputed.');
   }
 
-  const autoTriggeredRef = useRef(new Set());
-
   function runAgents() {
     return run('agents', async () => {
       try {
         const result = await runAgenticAnalysis(complaint.id, token);
         setAgenticRun(result);
-        if (result && result.priority_score != null) {
-          setSelected((prev) => prev ? {
-            ...prev,
-            agentic_priority_score: result.priority_score,
-            agentic_priority_band: result.priority_band,
-            agentic_priority_breakdown: result.priority_breakdown,
-            agentic_analysis: result,
-            human_review_required: Boolean(result.human_review_required),
-            ai_category: prev.ai_category || result.category,
-            ai_summary: prev.ai_summary || result.summary,
-          } : prev);
-        }
       } catch (err) {
         if (err.message && err.message.includes('already in progress')) {
           setFeedback({ text: 'Agent analysis is currently in progress.', tone: 'ok' });
@@ -896,21 +882,6 @@ function DetailDrawer({ complaint, token, onClose, onRefresh, onDeleted }) {
       }
     }, 'Agentic analysis completed. Review the evidence before applying any human decision.');
   }
-
-  // Automatically trigger agent pipeline for existing complaints with no agent results (Requirement 4)
-  useEffect(() => {
-    const cid = complaint.id;
-    if (agenticHistoryLoading) return;
-
-    const hasScore = complaint.agentic_priority_score != null || complaint.agentic_analysis != null || agenticRun?.priority_score != null;
-    const hasHistory = agenticHistory.length > 0;
-    const isBusy = busy === 'agents';
-
-    if (!hasScore && !hasHistory && !isBusy && !autoTriggeredRef.current.has(cid)) {
-      autoTriggeredRef.current.add(cid);
-      runAgents();
-    }
-  }, [complaint.id, complaint.agentic_priority_score, complaint.agentic_analysis, agenticRun, agenticHistory.length, agenticHistoryLoading, busy]);
 
   // Poll if status is RUNNING
   useEffect(() => {
@@ -1096,14 +1067,33 @@ function DetailDrawer({ complaint, token, onClose, onRefresh, onDeleted }) {
               </div>
             </div>
           </section>
-          {/* Priority score + breakdown (admin-only numbers) */}
+          {/* Unified Explainable Priority Score */}
           <section className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
-            <h3 className="text-sm font-bold uppercase tracking-wider text-slate-500 m-0 mb-3">
-              Priority score
-            </h3>
+            <div className="flex items-baseline justify-between gap-3 mb-1">
+              <strong className="text-xl font-bold text-slate-900">Agentic Priority Score</strong>
+              {(agenticScore ?? complaint.priority_score) != null ? (
+                <span className="font-mono text-lg font-extrabold text-indigo-700">
+                  {agenticScore ?? complaint.priority_score} / 100
+                </span>
+              ) : null}
+            </div>
+            <p className="text-xs text-slate-500 mb-3">Band: <strong className="text-slate-700">{agenticBand || complaint.band}</strong></p>
             <ScoreMeter band={agenticBand || complaint.band} score={agenticScore ?? complaint.priority_score} />
-            {complaint.priority_score == null ? (
+            {(agenticScore ?? complaint.priority_score) == null ? (
               <UnscoredNote />
+            ) : agenticRows.length > 0 ? (
+              <div className="mt-4 grid grid-cols-2 sm:grid-cols-3 gap-2.5 text-xs">
+                {agenticRows.map(({ key, value }) => (
+                  <div key={key} className="rounded-lg bg-slate-50 border border-slate-200/80 p-2.5">
+                    <div className="font-semibold text-slate-600 capitalize">
+                      {key === 'duplicates' ? 'Duplicate / Recurrence' : key}
+                    </div>
+                    <div className="text-slate-900 font-medium mt-1">
+                      {value.level || value.band || (value.boost != null ? `+${value.boost}` : value.points)} · {value.points ?? value.boost ?? 0} pts
+                    </div>
+                  </div>
+                ))}
+              </div>
             ) : breakdownRows.length > 0 ? (
               <div className="mt-4">
                 <table className="w-full text-xs">
@@ -1126,38 +1116,9 @@ function DetailDrawer({ complaint, token, onClose, onRefresh, onDeleted }) {
                     ))}
                   </tbody>
                 </table>
-                {breakdown.safety_floor_applied ? (
-                  <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mt-3 m-0">
-                    Safety floor applied: High safety kept the band at{' '}
-                    <strong>{complaint.band}</strong> (raw band {breakdown.band_raw}). The numeric
-                    score was not altered.
-                  </p>
-                ) : null}
               </div>
             ) : null}
-           </section>
-          {agenticScore != null ? (
-            <section className="bg-indigo-50 rounded-xl border border-indigo-200 shadow-sm p-5">
-              <h3 className="text-sm font-bold uppercase tracking-wider text-indigo-700 m-0 mb-1">
-                Deterministic explainable agentic priority
-              </h3>
-              <div className="flex items-baseline justify-between gap-3">
-                <strong className="text-2xl text-slate-900">Agentic Priority Score</strong>
-                <span className="font-mono text-xl font-extrabold text-indigo-800">
-                  {agenticScore} / 100
-                </span>
-              </div>
-              <p className="text-sm text-slate-600 mt-1 mb-3">Band: <strong>{agenticBand}</strong></p>
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs">
-                {agenticRows.map(({ key, value }) => (
-                  <div key={key} className="rounded-lg bg-white border border-indigo-100 p-2">
-                    <div className="font-semibold text-slate-600 capitalize">{key === 'duplicates' ? 'Duplicate / recurrence' : key}</div>
-                    <div className="text-slate-900 mt-1">{value.level || value.band || (value.boost != null ? `+${value.boost}` : value.points)} · {value.points ?? value.boost ?? 0} pts</div>
-                  </div>
-                ))}
-              </div>
-            </section>
-          ) : null}
+          </section>
 
           {/* AI analysis */}
           <section className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">

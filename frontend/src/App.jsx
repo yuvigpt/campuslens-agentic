@@ -78,19 +78,8 @@ function Shell() {
   // - First-time / logged-out visitor: redirect to #/signup on root or protected routes
   // - Authenticated visitor: automatically detect previous login from session storage and stay on home/app
   useEffect(() => {
-    if (!loading && !token) {
-      if (
-        hash === '' ||
-        hash === '#/' ||
-        hash === '#/home' ||
-        hash.startsWith('#/dashboard') ||
-        hash.startsWith('#/triage') ||
-        hash.startsWith('#/submit') ||
-        hash.startsWith('#/mine') ||
-        hash.startsWith('#/profile')
-      ) {
-        window.location.hash = '#/signup';
-      }
+    if (!loading && !token && (hash === '' || hash === '#/' || hash === '#/home')) {
+      window.location.hash = '#/signup';
     }
   }, [loading, token, hash]);
 

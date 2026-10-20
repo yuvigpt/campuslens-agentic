@@ -168,6 +168,23 @@ def _student_out(
 
 def _admin_out(row: dict, image_url: Optional[str], agentic_result: Optional[dict[str, Any]] = None) -> AdminComplaintOut:
     """Map a database row onto the ADMIN model (scores included)."""
+    score = (
+        agentic_result.get("priority_score")
+        if agentic_result and agentic_result.get("priority_score") is not None
+        else row.get("priority_score")
+    )
+    breakdown = (
+        agentic_result.get("priority_breakdown")
+        if agentic_result and agentic_result.get("priority_breakdown") is not None
+        else row.get("score_breakdown")
+    )
+    band = (
+        agentic_result.get("priority_band")
+        if agentic_result and agentic_result.get("priority_band")
+        else scoring.band_for_score(float(score))
+        if score is not None
+        else None
+    )
     return AdminComplaintOut(
         id=_sid(row["id"]),
         student_id=_sid(row["student_id"]),
@@ -182,12 +199,10 @@ def _admin_out(row: dict, image_url: Optional[str], agentic_result: Optional[dic
         confirmed_safety=row.get("confirmed_safety"),
         confirmed_by=_sid(row["confirmed_by"]) if row.get("confirmed_by") else None,
         analysis_confirmed_at=row.get("analysis_confirmed_at"),
-        priority_score=row.get("priority_score"),
-        score_breakdown=row.get("score_breakdown"),
+        priority_score=score,
+        score_breakdown=breakdown,
         score_computed_at=row.get("score_computed_at"),
-        band=scoring.band_for_score(float(row["priority_score"]))
-        if row.get("priority_score") is not None
-        else None,
+        band=band,
         ai_category=row.get("ai_category"),
         ai_summary=row.get("ai_summary"),
         ai_evidence=row.get("ai_evidence"),
@@ -200,9 +215,9 @@ def _admin_out(row: dict, image_url: Optional[str], agentic_result: Optional[dic
         resolved_at=row.get("resolved_at"),
         human_review_required=bool(agentic_result.get("human_review_required")) if agentic_result else False,
         agentic_analysis=agentic_result,
-        agentic_priority_score=agentic_result.get("priority_score") if agentic_result else None,
-        agentic_priority_band=agentic_result.get("priority_band") if agentic_result else None,
-        agentic_priority_breakdown=agentic_result.get("priority_breakdown") if agentic_result else None,
+        agentic_priority_score=score,
+        agentic_priority_band=band,
+        agentic_priority_breakdown=breakdown,
     )
 
 
