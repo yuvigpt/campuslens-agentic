@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import uuid
 from typing import Any, Optional
 
@@ -60,6 +61,9 @@ from ..schemas import (
 )
 
 logger = logging.getLogger("campuslens.api")
+
+_active_runs_lock = threading.Lock()
+_active_runs: set[str] = set()
 
 router = APIRouter(prefix="/api", tags=["campuslens"])
 
@@ -194,6 +198,7 @@ def _admin_out(row: dict, image_url: Optional[str], agentic_result: Optional[dic
         created_at=row.get("created_at"),
         updated_at=row.get("updated_at"),
         resolved_at=row.get("resolved_at"),
+        human_review_required=bool(agentic_result.get("human_review_required")) if agentic_result else False,
         agentic_analysis=agentic_result,
         agentic_priority_score=agentic_result.get("priority_score") if agentic_result else None,
         agentic_priority_band=agentic_result.get("priority_band") if agentic_result else None,
@@ -493,9 +498,21 @@ async def submit_complaint(
                 for key in ("image_observation", "text_observation", "image_text_conflict", "image_quality", "conflict_reason")
                 if suggestion.get(key) is not None
             }
+            candidates = []
+            try:
+                system_id = database.Identity(str(row["id"]), "system")
+                with database.session(settings.database_url, system_id) as c_conn:
+                    candidates = database.list_complaints(
+                        c_conn, student_id=None, sort="newest", limit=200, offset=0
+                    )
+            except Exception:
+                candidates = []
+
             agentic_result = agentic.orchestrate(
                 description=description,
                 location=location,
+                candidates=candidates,
+                current_id=str(row["id"]),
                 image_available=bool(image_bytes),
                 image_observation=visual_observation or None,
                 llm_analysis_result=suggestion or None,
@@ -741,6 +758,18 @@ async def list_all_complaints(
                 q=q,
                 open_only=open_only,
             )
+            runs_by_id = {}
+            for r in rows:
+                run = database.get_latest_agentic_run(conn, r["id"])
+                if run and run.get("status") == "COMPLETED":
+                    res = run.get("result")
+                    if isinstance(res, str):
+                        try:
+                            res = json.loads(res)
+                        except (TypeError, ValueError):
+                            res = None
+                    if isinstance(res, dict):
+                        runs_by_id[r["id"]] = res
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from None
     except database.DatabaseError:
@@ -749,7 +778,7 @@ async def list_all_complaints(
     out = []
     for row in rows:
         image_url = await _signed_image(settings, row, identity)
-        out.append(_admin_out(row, image_url))
+        out.append(_admin_out(row, image_url, runs_by_id.get(row["id"])))
     return out
 
 
@@ -807,7 +836,7 @@ async def related_complaints(
             if target is None:
                 raise HTTPException(404, "Complaint not found.")
             candidates = database.list_complaints(
-                conn, student_id=None, sort="newest", limit=500, offset=0, open_only=True
+                conn, student_id=None, sort="newest", limit=150, offset=0, open_only=True
             )
     except database.DatabaseError:
         raise HTTPException(503, "Could not load related complaints.") from None
@@ -827,31 +856,37 @@ async def run_agentic_analysis(
     """Re-run analysis on demand without changing status or claiming work done."""
     _validate_complaint_id(complaint_id)
     settings = _settings(request)
+    with _active_runs_lock:
+        if complaint_id in _active_runs:
+            raise HTTPException(409, "Agent analysis is already in progress for this complaint.")
+        _active_runs.add(complaint_id)
     try:
         with database.session(settings.database_url, identity) as conn:
             row = database.get_complaint(conn, complaint_id)
             candidates = database.list_complaints(conn, student_id=None, sort="newest", limit=200, offset=0)
-    except database.DatabaseError:
-        raise HTTPException(503, "Could not load the complaint for analysis.") from None
-    if row is None:
-        raise HTTPException(404, "Complaint not found.")
-    llm_suggestion: dict[str, Any] = {}
-    if settings.ai_enabled and ai.is_configured():
-        try:
-            llm_suggestion = ai.analyse(description=row["description"])
-        except ai.AnalysisUnavailable as exc:
-            logger.info("AI rerun unavailable (%s)", exc.kind)
-        except Exception:
-            logger.warning("AI rerun failed", exc_info=True)
-    result = agentic.orchestrate(
-        description=row["description"],
-        location=row["location_raw"],
-        candidates=candidates,
-        image_available=bool(row.get("image_path")),
-        llm_analysis_result=llm_suggestion or None,
-    )
-    _persist_agentic_result(settings, identity, complaint_id, result)
-    return {"complaint_id": complaint_id, **result}
+        if row is None:
+            raise HTTPException(404, "Complaint not found.")
+        llm_suggestion: dict[str, Any] = {}
+        if settings.ai_enabled and ai.is_configured():
+            try:
+                llm_suggestion = ai.analyse(description=row["description"])
+            except ai.AnalysisUnavailable as exc:
+                logger.info("AI rerun unavailable (%s)", exc.kind)
+            except Exception:
+                logger.warning("AI rerun failed", exc_info=True)
+        result = agentic.orchestrate(
+            description=row["description"],
+            location=row["location_raw"],
+            candidates=candidates,
+            current_id=complaint_id,
+            image_available=bool(row.get("image_path")),
+            llm_analysis_result=llm_suggestion or None,
+        )
+        _persist_agentic_result(settings, identity, complaint_id, result)
+        return {"complaint_id": complaint_id, **result}
+    finally:
+        with _active_runs_lock:
+            _active_runs.discard(complaint_id)
 
 
 @router.get(

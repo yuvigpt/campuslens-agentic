@@ -3,7 +3,7 @@ import {
   BarChart3,
   Calendar as CalendarIcon,
   ChevronLeft, ChevronRight, Download, MapPin,
-  Search, ShieldAlert, X,
+  Search, ShieldAlert, X, Loader2,
 } from 'lucide-react';
 
 import {
@@ -84,8 +84,7 @@ export default function DashboardPage({ view = 'overview', initialQuery = '' }) 
   const [band, setBand] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [category, setCategory] = useState('');
-  const [openOnly, setOpenOnly] = useState(false);
-  const [sort, setSort] = useState('priority');
+  const [sort, setSort] = useState('newest');
   const [limit, setLimit] = useState(20);
 
   // The overview queue shows a fixed slice of the newest complaints; the
@@ -112,7 +111,7 @@ export default function DashboardPage({ view = 'overview', initialQuery = '' }) 
   // Any filter change invalidates the current page number.
   useEffect(() => {
     setPage(1);
-  }, [q, band, statusFilter, category, openOnly, sort, limit, token]);
+  }, [q, band, statusFilter, category, sort, limit, token]);
   const loadData = useCallback(async () => {
     if (!token) return;
     const id = requestRef.current + 1;
@@ -131,7 +130,6 @@ export default function DashboardPage({ view = 'overview', initialQuery = '' }) 
             status: statusFilter || undefined,
             category: category || undefined,
             q: q || undefined,
-            open: openOnly ? true : undefined,
           }
         : { sort: 'newest', limit: pageSize + 1 };
       const rows = await listAllComplaints(params, token);
@@ -147,7 +145,7 @@ export default function DashboardPage({ view = 'overview', initialQuery = '' }) 
     } finally {
       if (requestRef.current === id) setLoading(false);
     }
-  }, [token, sort, pageSize, band, statusFilter, category, q, openOnly, page, isTriage]);
+  }, [token, sort, pageSize, band, statusFilter, category, q, page, isTriage]);
 
   const loadSummary = useCallback(async () => {
     if (!token) return;
@@ -259,10 +257,9 @@ export default function DashboardPage({ view = 'overview', initialQuery = '' }) 
     setBand('');
     setStatusFilter('');
     setCategory('');
-    setOpenOnly(false);
   }
 
-  const filtersActive = Boolean(q || band || statusFilter || category || openOnly);
+  const filtersActive = Boolean(q || band || statusFilter || category);
 
   // Category suggestions for the exact-match filter: whatever categories the
   // currently loaded rows actually carry (the backend has no fixed enum).
@@ -447,16 +444,7 @@ export default function DashboardPage({ view = 'overview', initialQuery = '' }) 
           </datalist>
         </label>
 
-        <label className="flex items-center gap-2 py-2 text-sm font-medium text-slate-700" htmlFor="dash-open">
-          <input
-            id="dash-open"
-            type="checkbox"
-            checked={openOnly}
-            onChange={(event) => setOpenOnly(event.target.checked)}
-            className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-          />
-          Open only
-        </label>
+
 
         <label className="flex flex-col gap-1" htmlFor="dash-sort">
           <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Sort</span>
@@ -648,9 +636,9 @@ export default function DashboardPage({ view = 'overview', initialQuery = '' }) 
                         </td>
                         <td className="py-4 px-4 align-top">
                           <div className="flex flex-col gap-1 items-start">
-                            <PriorityBadge band={complaint.band} score={complaint.priority_score} />
+                            <PriorityBadge band={complaint.agentic_priority_band || complaint.band} score={complaint.agentic_priority_score ?? complaint.priority_score} />
                             <span className="text-[11px] text-slate-500 font-medium">
-                              {complaint.ai_category || 'Uncategorised'}
+                              {complaint.ai_category || complaint.agentic_analysis?.category || 'Uncategorised'}
                             </span>
                           </div>
                         </td>
@@ -740,15 +728,25 @@ export default function DashboardPage({ view = 'overview', initialQuery = '' }) 
  * The score form is PREFILLED from the admin-confirmed values, falling back to
  * the AI suggestion - but nothing is scored until this form is submitted.
  */
-function RelatedComplaints({ complaint, related }) {
+function RelatedComplaints({ complaint, related, loading }) {
   const items = Array.isArray(related?.related) ? related.related : [];
   return (
     <section className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
       <div className="flex items-baseline justify-between gap-3 mb-3">
         <h3 className="text-sm font-bold uppercase tracking-wider text-slate-500 m-0">Related Complaints</h3>
-        <span className="text-xs font-semibold text-indigo-700">{related?.total_count || 0} unresolved related</span>
+        <span className="text-xs font-semibold text-indigo-700">
+          {loading ? 'Analysing...' : `${related?.total_count || 0} unresolved related`}
+        </span>
       </div>
-      {items.length === 0 ? <p className="text-sm text-slate-400 italic m-0">No unresolved related complaints found.</p> : (
+      {loading ? (
+        <div className="flex flex-col items-center justify-center p-6 bg-slate-50 rounded-lg border border-slate-100 text-center">
+          <Loader2 className="w-5 h-5 text-indigo-600 animate-spin mb-2" />
+          <p className="text-xs font-semibold text-slate-700 m-0">Analysing related complaints...</p>
+          <p className="text-[11px] text-slate-500 mt-1 m-0">Cross-referencing category, building, and location signals</p>
+        </div>
+      ) : items.length === 0 ? (
+        <p className="text-sm text-slate-400 italic m-0">No unresolved related complaints found.</p>
+      ) : (
         <>
           <svg viewBox="0 0 520 190" className="w-full h-44 rounded-lg bg-slate-50 border border-slate-100" role="img" aria-label="Related complaint relationship graph">
             {items.slice(0, 6).map((item, index) => {
@@ -770,6 +768,7 @@ function RelatedComplaints({ complaint, related }) {
 
 function DetailDrawer({ complaint, token, onClose, onRefresh, onDeleted }) {
   const [events, setEvents] = useState([]);
+  const [eventsLoading, setEventsLoading] = useState(true);
   const [notes, setNotes] = useState([]);
   const [timelineError, setTimelineError] = useState(null);
   const [busy, setBusy] = useState(null); // 'status' | 'score' | 'publish' | 'note' | 'delete'
@@ -777,6 +776,7 @@ function DetailDrawer({ complaint, token, onClose, onRefresh, onDeleted }) {
   const [agenticRun, setAgenticRun] = useState(null);
   const [agenticHistory, setAgenticHistory] = useState([]);
   const [related, setRelated] = useState({ total_count: 0, related: [] });
+  const [relatedLoading, setRelatedLoading] = useState(true);
 
   const [statusValue, setStatusValue] = useState(
     STATUSES.includes(complaint.status) ? complaint.status : STATUSES[0],
@@ -795,35 +795,46 @@ function DetailDrawer({ complaint, token, onClose, onRefresh, onDeleted }) {
   const [noteDraft, setNoteDraft] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
 
-  const loadTimeline = useCallback(async () => {
+  const loadTimeline = useCallback(() => {
     setTimelineError(null);
-    const [eventsResult, notesResult, runsResult, relatedResult] = await Promise.allSettled([
-      listComplaintEvents(complaint.id, token),
-      listInvestigationNotes(complaint.id, token),
-      listAgentRuns(complaint.id, token),
-      listRelatedComplaints(complaint.id, token),
-    ]);
-    setEvents(
-      eventsResult.status === 'fulfilled' && Array.isArray(eventsResult.value)
-        ? eventsResult.value
-        : [],
-    );
-    setNotes(
-      notesResult.status === 'fulfilled' && Array.isArray(notesResult.value)
-        ? notesResult.value
-        : [],
-    );
-    setAgenticHistory(
-      runsResult.status === 'fulfilled' && Array.isArray(runsResult.value) ? runsResult.value : [],
-    );
-    setRelated(
-      relatedResult.status === 'fulfilled' && relatedResult.value
-        ? relatedResult.value
-        : { total_count: 0, related: [] },
-    );
-    if (eventsResult.status === 'rejected' || notesResult.status === 'rejected' || runsResult.status === 'rejected' || relatedResult.status === 'rejected') {
-      setTimelineError('The audit trail or the notes could not be loaded.');
-    }
+    setEventsLoading(true);
+    setRelatedLoading(true);
+
+    // 1. Audit trail: fetch and display instantly without waiting for heavier endpoints
+    listComplaintEvents(complaint.id, token)
+      .then((val) => {
+        if (Array.isArray(val)) setEvents(val);
+      })
+      .catch(() => {
+        setTimelineError((prev) => prev || 'The audit trail could not be loaded.');
+      })
+      .finally(() => setEventsLoading(false));
+
+    // 2. Investigation notes
+    listInvestigationNotes(complaint.id, token)
+      .then((val) => {
+        if (Array.isArray(val)) setNotes(val);
+      })
+      .catch(() => {});
+
+    // 3. Agent execution history
+    listAgentRuns(complaint.id, token)
+      .then((val) => {
+        if (Array.isArray(val)) setAgenticHistory(val);
+      })
+      .catch(() => {});
+
+    // 4. Related complaints graph
+    listRelatedComplaints(complaint.id, token)
+      .then((val) => {
+        if (val && Array.isArray(val.related)) {
+          setRelated(val);
+        } else if (Array.isArray(val)) {
+          setRelated({ total_count: val.length, related: val });
+        }
+      })
+      .catch(() => {})
+      .finally(() => setRelatedLoading(false));
   }, [complaint.id, token]);
 
   useEffect(() => {
@@ -854,12 +865,60 @@ function DetailDrawer({ complaint, token, onClose, onRefresh, onDeleted }) {
     return run('score', () => confirmAnalysis(complaint.id, scoreInputs, token), 'Priority score confirmed and recomputed.');
   }
 
+  const autoTriggeredRef = useRef(new Set());
+
   function runAgents() {
     return run('agents', async () => {
       const result = await runAgenticAnalysis(complaint.id, token);
       setAgenticRun(result);
+      if (result && result.priority_score != null) {
+        setSelected((prev) => prev ? {
+          ...prev,
+          agentic_priority_score: result.priority_score,
+          agentic_priority_band: result.priority_band,
+          agentic_priority_breakdown: result.priority_breakdown,
+          agentic_analysis: result,
+          human_review_required: Boolean(result.human_review_required),
+          ai_category: prev.ai_category || result.category,
+          ai_summary: prev.ai_summary || result.summary,
+        } : prev);
+      }
     }, 'Agentic analysis completed. Review the evidence before applying any human decision.');
   }
+
+  // Automatically trigger agent pipeline for existing complaints with no agent results (Requirement 4)
+  useEffect(() => {
+    const cid = complaint.id;
+    const hasScore = complaint.agentic_priority_score != null || agenticRun?.priority_score != null;
+    const hasHistory = agenticHistory.length > 0;
+    const isBusy = busy === 'agents';
+
+    if (!hasScore && !hasHistory && !isBusy && !autoTriggeredRef.current.has(cid)) {
+      autoTriggeredRef.current.add(cid);
+      runAgents();
+    }
+  }, [complaint.id, complaint.agentic_priority_score, agenticRun, agenticHistory.length, busy]);
+
+  // Poll if status is RUNNING
+  useEffect(() => {
+    const isRunning = agenticHistory[0]?.status === 'RUNNING';
+    if (!isRunning) return undefined;
+
+    const interval = setInterval(async () => {
+      try {
+        const runs = await listAgentRuns(complaint.id, token);
+        if (Array.isArray(runs) && runs[0]?.status !== 'RUNNING') {
+          setAgenticHistory(runs);
+          await onRefresh();
+          clearInterval(interval);
+        }
+      } catch {
+        // ignore polling error
+      }
+    }, 2000);
+
+    return () => clearInterval(interval);
+  }, [complaint.id, token, agenticHistory, onRefresh]);
 
   function publish() {
     if (pubSummary.trim().length < 10) {
@@ -915,7 +974,10 @@ function DetailDrawer({ complaint, token, onClose, onRefresh, onDeleted }) {
           max: breakdown[key].max,
         }))
     : [];
-  const agenticBreakdown = complaint.agentic_priority_breakdown || null;
+  const agenticResult = agenticRun || complaint.agentic_analysis || (agenticHistory[0]?.status === 'COMPLETED' ? agenticHistory[0]?.result : null);
+  const agenticScore = complaint.agentic_priority_score ?? agenticResult?.priority_score;
+  const agenticBand = complaint.agentic_priority_band || agenticResult?.priority_band;
+  const agenticBreakdown = complaint.agentic_priority_breakdown || agenticResult?.priority_breakdown;
   const agenticRows = agenticBreakdown
     ? ['safety', 'impact', 'urgency', 'category', 'duplicates']
       .filter((key) => agenticBreakdown[key])
@@ -942,7 +1004,7 @@ function DetailDrawer({ complaint, token, onClose, onRefresh, onDeleted }) {
               {shortId(complaint.id)}
             </h2>
             <StatusBadge status={complaint.status} />
-            <PriorityBadge band={complaint.band} score={complaint.priority_score} />
+            <PriorityBadge band={agenticBand || complaint.band} score={agenticScore ?? complaint.priority_score} />
           </div>
           <button
             type="button"
@@ -1018,7 +1080,7 @@ function DetailDrawer({ complaint, token, onClose, onRefresh, onDeleted }) {
             <h3 className="text-sm font-bold uppercase tracking-wider text-slate-500 m-0 mb-3">
               Priority score
             </h3>
-            <ScoreMeter band={complaint.band} score={complaint.priority_score} />
+            <ScoreMeter band={agenticBand || complaint.band} score={agenticScore ?? complaint.priority_score} />
             {complaint.priority_score == null ? (
               <UnscoredNote />
             ) : breakdownRows.length > 0 ? (
@@ -1053,7 +1115,7 @@ function DetailDrawer({ complaint, token, onClose, onRefresh, onDeleted }) {
               </div>
             ) : null}
            </section>
-          {complaint.agentic_priority_score != null ? (
+          {agenticScore != null ? (
             <section className="bg-indigo-50 rounded-xl border border-indigo-200 shadow-sm p-5">
               <h3 className="text-sm font-bold uppercase tracking-wider text-indigo-700 m-0 mb-1">
                 Deterministic explainable agentic priority
@@ -1061,10 +1123,10 @@ function DetailDrawer({ complaint, token, onClose, onRefresh, onDeleted }) {
               <div className="flex items-baseline justify-between gap-3">
                 <strong className="text-2xl text-slate-900">Agentic Priority Score</strong>
                 <span className="font-mono text-xl font-extrabold text-indigo-800">
-                  {complaint.agentic_priority_score} / 100
+                  {agenticScore} / 100
                 </span>
               </div>
-              <p className="text-sm text-slate-600 mt-1 mb-3">Band: <strong>{complaint.agentic_priority_band}</strong></p>
+              <p className="text-sm text-slate-600 mt-1 mb-3">Band: <strong>{agenticBand}</strong></p>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs">
                 {agenticRows.map(({ key, value }) => (
                   <div key={key} className="rounded-lg bg-white border border-indigo-100 p-2">
@@ -1078,8 +1140,43 @@ function DetailDrawer({ complaint, token, onClose, onRefresh, onDeleted }) {
 
           {/* AI analysis */}
           <section className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
-            <div className="flex items-center justify-between gap-3 mb-3">
-              <h3 className="text-sm font-bold uppercase tracking-wider text-slate-500 m-0">AI analysis</h3>
+            <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
+              <div className="flex items-center gap-2.5 flex-wrap">
+                <h3 className="text-sm font-bold uppercase tracking-wider text-slate-500 m-0">AI analysis</h3>
+                {(() => {
+                  const isRunning = busy === 'agents' || agenticHistory[0]?.status === 'RUNNING';
+                  const isFailed = (agenticHistory[0]?.status === 'FAILED' || agenticRun?.status === 'FAILED') && agenticScore == null;
+                  const isCompleted = agenticScore != null || agenticHistory[0]?.status === 'COMPLETED';
+
+                  if (isRunning) {
+                    return (
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-blue-100 text-blue-700 border border-blue-200">
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                        Agent analysis running...
+                      </span>
+                    );
+                  }
+                  if (isFailed) {
+                    return (
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-rose-100 text-rose-700 border border-rose-200">
+                        Agent analysis failed — review required
+                      </span>
+                    );
+                  }
+                  if (isCompleted) {
+                    return (
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-700 border border-emerald-200">
+                        Agent analysis complete
+                      </span>
+                    );
+                  }
+                  return (
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-600 border border-slate-200">
+                      Waiting for agent analysis
+                    </span>
+                  );
+                })()}
+              </div>
               <button type="button" onClick={runAgents} disabled={busy === 'agents'} className="text-xs font-semibold text-indigo-700 border border-indigo-200 rounded-lg px-2.5 py-1.5 hover:bg-indigo-50 disabled:opacity-50">
                  {busy === 'agents' ? 'Running…' : 'Rerun agent pipeline'}
               </button>
@@ -1137,20 +1234,37 @@ function DetailDrawer({ complaint, token, onClose, onRefresh, onDeleted }) {
                 No AI suggestion was stored for this complaint.
               </p>
             )}
-            {(agenticRun || agenticHistory[0]) ? (() => {
-              const run = agenticRun || agenticHistory[0];
-              const result = agenticRun ? run : (run.result || {});
-              const steps = agenticRun ? (run.agents || []) : (run.steps || []);
+            {(agenticResult || agenticHistory[0]) ? (() => {
+              const run = agenticHistory[0];
+              const result = agenticResult || run?.result || run || {};
+              const steps = result?.agents || run?.steps || [];
+              const reviewRequired = Boolean(result?.human_review_required || run?.human_review_required || complaint.human_review_required);
               return <div className="mt-4 rounded-xl border border-indigo-100 bg-indigo-50/50 p-3 text-xs">
-                 <div className="flex justify-between gap-3 font-semibold text-slate-700"><span>Hybrid agentic analysis</span><span>{result.priority_score ?? '—'} · {result.priority_band ?? run.status}</span></div>
+                 <div className="flex justify-between gap-3 font-semibold text-slate-700"><span>Hybrid agentic analysis</span><span>{agenticScore ?? result?.priority_score ?? '—'} · {agenticBand ?? result?.priority_band ?? run?.status ?? 'Pending'}</span></div>
                  <p className="mt-1 text-slate-600">LLM Analysis is validated by deterministic specialist agents, a critic, and the deterministic priority engine. This is one structured provider observation, not eight separate Gemini calls.</p>
-                <p className="mt-1 text-slate-600">{result.department || 'Department pending'} · {result.duplicate_count ?? '—'} similar report(s) · confidence {result.confidence ?? run.confidence ?? '—'}</p>
-                <ol className="mt-2 grid sm:grid-cols-2 gap-1.5">{steps.map((item) => <li key={item.agent || item.agent_name} className="bg-white rounded px-2 py-1 flex justify-between"><span className="capitalize">{item.agent || item.agent_name}</span><strong>{item.status}</strong></li>)}</ol>
-                {(result.human_review_required || run.human_review_required) ? <p className="mt-2 font-semibold text-amber-800">Human review recommended.</p> : null}
+                <p className="mt-1 text-slate-600">{result?.department || 'Department pending'} · {result?.duplicate_count ?? 0} similar report(s) · confidence {result?.confidence ?? run?.confidence ?? '—'}</p>
+                {steps.length > 0 ? (
+                  <ol className="mt-2 grid sm:grid-cols-2 gap-1.5">
+                    {steps.map((item) => (
+                      <li key={item.agent || item.agent_name} className="bg-white rounded px-2 py-1 flex justify-between items-center border border-indigo-50">
+                        <span className="capitalize text-slate-700 font-medium">{item.agent || item.agent_name}</span>
+                        <strong className={item.status === 'COMPLETED' ? 'text-emerald-700 font-semibold text-[11px]' : 'text-amber-700 font-semibold text-[11px]'}>
+                          {item.status}
+                        </strong>
+                      </li>
+                    ))}
+                  </ol>
+                ) : null}
+                {reviewRequired ? (
+                  <div className="mt-2.5 p-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 font-semibold text-xs flex items-center gap-1.5">
+                    <span>⚠️</span>
+                    <span>Human review recommended — review critic and evidence before taking action.</span>
+                  </div>
+                ) : null}
               </div>;
             })() : null}
           </section>
-          <RelatedComplaints complaint={complaint} related={related} />
+          <RelatedComplaints complaint={complaint} related={related} loading={relatedLoading} />
           {/* ACTIONS: status, score, publish, delete */}
           <section className="bg-white rounded-xl border border-slate-200 shadow-sm p-5 flex flex-col gap-5">
             <h3 className="text-sm font-bold uppercase tracking-wider text-slate-500 m-0">Actions</h3>
@@ -1332,14 +1446,19 @@ function DetailDrawer({ complaint, token, onClose, onRefresh, onDeleted }) {
             <h3 className="text-sm font-bold uppercase tracking-wider text-slate-500 m-0 mb-3">
               Audit trail
             </h3>
-            {timelineError ? (
+            {eventsLoading ? (
+              <div className="flex items-center gap-2 text-xs text-slate-500 py-3">
+                <Loader2 className="w-4 h-4 text-indigo-600 animate-spin" />
+                <span>Loading audit trail...</span>
+              </div>
+            ) : timelineError ? (
               <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 m-0">
                 {timelineError}
               </p>
-            ) : null}
-            {!timelineError && events.length === 0 ? (
+            ) : events.length === 0 ? (
               <p className="text-sm text-slate-400 italic m-0">No events recorded yet.</p>
             ) : null}
+            {!eventsLoading && (
             <ol className="flex flex-col gap-0 m-0 p-0 list-none">
               {events.map((event) => (
                 <li
@@ -1363,6 +1482,7 @@ function DetailDrawer({ complaint, token, onClose, onRefresh, onDeleted }) {
                 </li>
               ))}
             </ol>
+            )}
           </section>
 
           {/* INVESTIGATION NOTES (admin-only) */}

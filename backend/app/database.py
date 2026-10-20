@@ -655,7 +655,7 @@ def persist_agentic_run(
     """
     try:
         run_id = str(result.get("run_id") or uuid4())
-        status = "COMPLETED" if str(result.get("analysis_status", "")).startswith("completed") else "FAILED"
+        status = "COMPLETED" if str(result.get("analysis_status", "")).startswith("completed") and result.get("priority_score") is not None else "FAILED"
         run_result = json.dumps(result, default=str)
         conn.execute(
             """

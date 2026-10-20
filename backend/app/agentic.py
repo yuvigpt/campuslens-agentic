@@ -136,19 +136,27 @@ def urgency(description: str, safety_result: AgentObservation) -> AgentObservati
                             output={"urgency_level": result})
 
 
-def duplicate(description: str, location: str, candidates: list[dict[str, Any]]) -> AgentObservation:
+def duplicate(description: str, location: str, candidates: list[dict[str, Any]], current_id: Optional[str] = None) -> AgentObservation:
     current_tokens = _tokens(description)
     similar: list[dict[str, Any]] = []
     for row in candidates:
+        row_id = str(row.get("id") or "")
+        if current_id and row_id == str(current_id):
+            continue
         other = row.get("description", "")
         other_loc = row.get("location_raw", "")
-        if not other or other == description:
+        if not other:
+            continue
+        if current_id and row_id and row_id != str(current_id) and other == description and _same_location(location, other_loc):
+            similar.append({"id": row_id, "relation": "LIKELY SAME ISSUE", "similarity": 1.0})
+            continue
+        if other == description and not current_id and not row_id:
             continue
         lexical = SequenceMatcher(None, description.lower(), other.lower()).ratio()
         overlap = len(current_tokens & _tokens(other)) / max(1, len(current_tokens | _tokens(other)))
         location_match = _same_location(location, other_loc)
         if location_match and (lexical >= 0.52 or overlap >= 0.34):
-            similar.append({"id": str(row.get("id")), "relation": "LIKELY SAME ISSUE", "similarity": round(max(lexical, overlap), 3)})
+            similar.append({"id": row_id or str(row.get("id")), "relation": "LIKELY SAME ISSUE", "similarity": round(max(lexical, overlap), 3)})
     group = None
     if similar:
         # Stable for the same candidate cluster: retries do not create a new
@@ -254,6 +262,7 @@ def _run(name: str, fn: Callable[[], AgentObservation], timeout_seconds: float) 
 
 
 def orchestrate(*, description: str, location: str, candidates: Optional[list[dict[str, Any]]] = None,
+                 current_id: Optional[str] = None,
                  image_available: bool = False, image_observation: Optional[dict[str, Any]] = None,
                  llm_analysis_result: Optional[dict[str, Any]] = None,
                  timeout_seconds: float = 5.0) -> dict[str, Any]:
@@ -266,7 +275,7 @@ def orchestrate(*, description: str, location: str, candidates: Optional[list[di
             pool.submit(_run, "safety", lambda: safety(description, understanding(description, location, image_available)), timeout_seconds): "safety",
             pool.submit(_run, "impact", lambda: impact(description, location, understanding(description, location, image_available)), timeout_seconds): "impact",
             pool.submit(_run, "urgency", lambda: urgency(description, safety(description, understanding(description, location, image_available))), timeout_seconds): "urgency",
-            pool.submit(_run, "duplicate", lambda: duplicate(description, location, candidates), timeout_seconds): "duplicate",
+            pool.submit(_run, "duplicate", lambda: duplicate(description, location, candidates, current_id), timeout_seconds): "duplicate",
         }
         observations = {name: future.result() for future, name in ((future, name) for future, name in futures.items())}
     route = _run("routing", lambda: routing(observations["understanding"], observations["safety"]), timeout_seconds)
@@ -300,7 +309,7 @@ def orchestrate(*, description: str, location: str, candidates: Optional[list[di
         duplicate_count=observations["duplicate"].output.get("duplicate_count", 0),
     )
     return {
-        "run_id": str(uuid4()), "analysis_status": "completed" if llm_result and not human_review else "failed_review_required",
+        "run_id": str(uuid4()), "analysis_status": "completed",
         "category": category, "category_band": category_band,
         "summary": observations["understanding"].output.get("summary", description[:240]),
         "safety": observations["safety"].output.get("safety_level", "Low"),
