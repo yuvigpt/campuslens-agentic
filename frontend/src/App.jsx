@@ -73,6 +73,7 @@ function Shell() {
   const isDashboard =
     currentPath.startsWith('#/dashboard') || currentPath.startsWith('#/triage');
   const isSignInView = hash === '#/signin' || hash === '#/signup';
+  const isHomePage = currentPath === '#/' || currentPath === '#/home' || currentPath === '#' || !currentPath;
 
   // Navigation and auth guards:
   // - First-time / logged-out visitor: redirect to #/signup on root or protected routes
@@ -773,7 +774,7 @@ function Shell() {
           )}
 
           {renderPage()}
-          <Footer onOpenMap={() => setMapOpen(true)} />
+          {isHomePage ? <Footer onOpenMap={() => setMapOpen(true)} /> : null}
         </main>
 
         {/* ============================================================ */}
