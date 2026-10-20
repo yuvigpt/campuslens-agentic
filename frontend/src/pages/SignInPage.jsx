@@ -8,12 +8,13 @@ import { IITKLogo, GoogleLogo, CampusLensIcon } from '../components/BrandIcons.j
 // Authorized admin emails that can unlock the Faculty and Campus Administrator portals
 const AUTHORIZED_ADMIN_EMAILS = [
   'yuvrajkrgupta87@gmail.com',
+  'admin@campuslens.agentic',
 ];
 
 export function isAuthorizedAdminEmail(emailStr) {
   if (!emailStr) return false;
   const clean = emailStr.trim().toLowerCase();
-  return clean === 'yuvrajkrgupta87@gmail.com';
+  return clean === 'yuvrajkrgupta87@gmail.com' || clean === 'admin@campuslens.agentic';
 }
 
 /**
