@@ -51,6 +51,70 @@ def _unauthorized(detail: str = "Not authenticated.") -> HTTPException:
     )
 
 
+def _safe_claim_value(value: Any) -> Any:
+    """Keep diagnostic claim values bounded and free of control characters."""
+    if isinstance(value, str):
+        return "".join(char if char.isprintable() else "?" for char in value)[:256]
+    if isinstance(value, list):
+        return [_safe_claim_value(item) for item in value[:8]]
+    return value
+
+
+def _unverified_metadata(token: str) -> tuple[Any, Any, bool]:
+    """Read only diagnostic claim metadata; never use it for authorization."""
+    import jwt
+
+    try:
+        payload = jwt.decode(
+            token,
+            options={
+                "verify_signature": False,
+                "verify_exp": False,
+                "verify_aud": False,
+                "verify_iss": False,
+            },
+        )
+    except Exception:
+        return None, None, False
+    if not isinstance(payload, dict):
+        return None, None, False
+    return (
+        _safe_claim_value(payload.get("iss")),
+        _safe_claim_value(payload.get("aud")),
+        isinstance(payload.get("sub"), str) and bool(payload.get("sub")),
+    )
+
+
+def _log_token_failure(
+    category: str,
+    *,
+    alg: Any = None,
+    kid: Any = None,
+    issuer: Any = None,
+    audience: Any = None,
+    sub_present: bool = False,
+    exception_class: Optional[str] = None,
+    authorization_present: Optional[bool] = None,
+    bearer_valid: Optional[bool] = True,
+) -> None:
+    """Emit bounded auth diagnostics without token or secret material."""
+    fields: dict[str, Any] = {
+        "category": category,
+        "alg": _safe_claim_value(alg),
+        "kid": _safe_claim_value(kid),
+        "issuer": issuer,
+        "audience": audience,
+        "sub_present": sub_present,
+    }
+    if authorization_present is not None:
+        fields["authorization_present"] = authorization_present
+    if bearer_valid is not None:
+        fields["bearer_valid"] = bearer_valid
+    if exception_class:
+        fields["exception_class"] = exception_class
+    logger.warning("auth failure diagnostics %s", fields)
+
+
 def reset_jwks_cache() -> None:
     """Drop the cached signing keys (used by tests)."""
     _jwks_cache["at"] = 0.0
@@ -99,20 +163,30 @@ def verify_token(token: str, settings: config.Settings) -> str:
     import jwt
 
     if not isinstance(token, str) or len(token) > 8192:
+        _log_token_failure("jwt_header_invalid")
         raise _unauthorized("Invalid token.")
 
     try:
         header = jwt.get_unverified_header(token)
-    except Exception:
+    except Exception as exc:
+        _log_token_failure("jwt_header_invalid", exception_class=type(exc).__name__)
         raise _unauthorized("Invalid token.") from None
 
     alg = header.get("alg")
+    kid = header.get("kid")
+    issuer, audience, sub_present = _unverified_metadata(token)
     if alg not in ALLOWED_ALGS:
-        logger.warning("rejected token with algorithm %s", alg)
+        _log_token_failure(
+            "algorithm_rejected", alg=alg, kid=kid, issuer=issuer,
+            audience=audience, sub_present=sub_present,
+        )
         raise _unauthorized("Invalid token.")
 
-    kid = header.get("kid")
     if not kid:
+        _log_token_failure(
+            "kid_missing", alg=alg, issuer=issuer, audience=audience,
+            sub_present=sub_present,
+        )
         raise _unauthorized("Invalid token.")
 
     keys = _fetch_jwks(settings)
@@ -122,6 +196,10 @@ def verify_token(token: str, settings: config.Settings) -> str:
         keys = _fetch_jwks(settings)
         jwk = keys.get(kid)
     if jwk is None:
+        _log_token_failure(
+            "kid_not_in_jwks", alg=alg, kid=kid, issuer=issuer,
+            audience=audience, sub_present=sub_present,
+        )
         raise _unauthorized("Invalid token.")
 
     try:
@@ -133,12 +211,20 @@ def verify_token(token: str, settings: config.Settings) -> str:
             audience="authenticated",
             options={"require": ["sub", "exp", "aud"]},
         )
-    except Exception:
-        logger.warning("token verification failed")
+    except Exception as exc:
+        _log_token_failure(
+            "jwt_decode_failed", alg=alg, kid=kid, issuer=issuer,
+            audience=audience, sub_present=sub_present,
+            exception_class=type(exc).__name__,
+        )
         raise _unauthorized("Invalid or expired token.") from None
 
     sub = claims.get("sub")
     if not isinstance(sub, str) or not sub:
+        _log_token_failure(
+            "sub_missing", alg=alg, kid=kid, issuer=issuer,
+            audience=audience, sub_present=False,
+        )
         raise _unauthorized("Invalid token.")
     return sub
 
@@ -151,9 +237,18 @@ async def current_identity(
 
     This is the ONLY source of identity for every authenticated route.
     """
+    authorization_present = bool(request.headers.get("authorization"))
     if credentials is None or not credentials.credentials:
+        _log_token_failure(
+            "header_missing" if not authorization_present else "bearer_invalid",
+            authorization_present=authorization_present,
+            bearer_valid=False,
+        )
         raise _unauthorized("Missing bearer token.")
     if (credentials.scheme or "").lower() != "bearer":
+        _log_token_failure(
+            "bearer_invalid", authorization_present=True, bearer_valid=False
+        )
         raise _unauthorized("Missing bearer token.")
 
     settings: config.Settings = request.app.state.settings

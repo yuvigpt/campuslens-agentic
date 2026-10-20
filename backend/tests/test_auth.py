@@ -20,13 +20,20 @@ def test_public_feed_needs_no_auth(client):
     assert client.get("/api/public/complaints").status_code == 200
 
 
-def test_list_own_requires_a_token(client):
+def test_list_own_requires_a_token(client, caplog):
+    caplog.set_level("WARNING", logger="campuslens.auth")
     assert client.get("/api/complaints").status_code == 401
+    assert "category': 'header_missing'" in caplog.text
+    assert "authorization_present': False" in caplog.text
+    assert "bearer_valid': False" in caplog.text
 
 
-def test_list_own_rejects_a_garbage_token(client):
+def test_list_own_rejects_a_garbage_token(client, caplog):
+    caplog.set_level("WARNING", logger="campuslens.auth")
     r = client.get("/api/complaints", headers={"Authorization": "Bearer not-a-jwt"})
     assert r.status_code == 401
+    assert "category': 'jwt_header_invalid'" in caplog.text
+    assert "not-a-jwt" not in caplog.text
 
 
 def test_submit_requires_a_token(client):
