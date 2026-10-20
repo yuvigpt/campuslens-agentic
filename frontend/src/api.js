@@ -91,7 +91,7 @@ function authHeaders(token) {
 async function request(path, { token = null, ...options } = {}) {
   let response;
   const isTest = typeof process !== 'undefined' && process.env?.NODE_ENV === 'test';
-  const maxRetries = isTest ? 0 : 2;
+  const maxRetries = isTest ? 0 : 3;
 
   let lastFetchError = null;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
@@ -102,7 +102,7 @@ async function request(path, { token = null, ...options } = {}) {
       });
       // If Render free tier returns 502/503/504 while waking up, retry
       if ([502, 503, 504].includes(response.status) && attempt < maxRetries) {
-        await new Promise((resolve) => setTimeout(resolve, 2000));
+        await new Promise((resolve) => setTimeout(resolve, Math.min(2000 * Math.pow(2, attempt), 5000)));
         continue;
       }
       lastFetchError = null;
@@ -110,7 +110,7 @@ async function request(path, { token = null, ...options } = {}) {
     } catch (err) {
       lastFetchError = err;
       if (attempt < maxRetries) {
-        await new Promise((resolve) => setTimeout(resolve, 2000));
+        await new Promise((resolve) => setTimeout(resolve, Math.min(2000 * Math.pow(2, attempt), 5000)));
         continue;
       }
     }

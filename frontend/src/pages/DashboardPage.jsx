@@ -775,6 +775,7 @@ function DetailDrawer({ complaint, token, onClose, onRefresh, onDeleted }) {
   const [feedback, setFeedback] = useState(null); // { text, tone: 'ok' | 'error' }
   const [agenticRun, setAgenticRun] = useState(null);
   const [agenticHistory, setAgenticHistory] = useState([]);
+  const [agenticHistoryLoading, setAgenticHistoryLoading] = useState(true);
   const [related, setRelated] = useState({ total_count: 0, related: [] });
   const [relatedLoading, setRelatedLoading] = useState(true);
 
@@ -799,6 +800,7 @@ function DetailDrawer({ complaint, token, onClose, onRefresh, onDeleted }) {
     setTimelineError(null);
     setEventsLoading(true);
     setRelatedLoading(true);
+    setAgenticHistoryLoading(true);
 
     // 1. Audit trail: fetch and display instantly without waiting for heavier endpoints
     listComplaintEvents(complaint.id, token)
@@ -822,7 +824,8 @@ function DetailDrawer({ complaint, token, onClose, onRefresh, onDeleted }) {
       .then((val) => {
         if (Array.isArray(val)) setAgenticHistory(val);
       })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => setAgenticHistoryLoading(false));
 
     // 4. Related complaints graph
     listRelatedComplaints(complaint.id, token)
@@ -869,19 +872,27 @@ function DetailDrawer({ complaint, token, onClose, onRefresh, onDeleted }) {
 
   function runAgents() {
     return run('agents', async () => {
-      const result = await runAgenticAnalysis(complaint.id, token);
-      setAgenticRun(result);
-      if (result && result.priority_score != null) {
-        setSelected((prev) => prev ? {
-          ...prev,
-          agentic_priority_score: result.priority_score,
-          agentic_priority_band: result.priority_band,
-          agentic_priority_breakdown: result.priority_breakdown,
-          agentic_analysis: result,
-          human_review_required: Boolean(result.human_review_required),
-          ai_category: prev.ai_category || result.category,
-          ai_summary: prev.ai_summary || result.summary,
-        } : prev);
+      try {
+        const result = await runAgenticAnalysis(complaint.id, token);
+        setAgenticRun(result);
+        if (result && result.priority_score != null) {
+          setSelected((prev) => prev ? {
+            ...prev,
+            agentic_priority_score: result.priority_score,
+            agentic_priority_band: result.priority_band,
+            agentic_priority_breakdown: result.priority_breakdown,
+            agentic_analysis: result,
+            human_review_required: Boolean(result.human_review_required),
+            ai_category: prev.ai_category || result.category,
+            ai_summary: prev.ai_summary || result.summary,
+          } : prev);
+        }
+      } catch (err) {
+        if (err.message && err.message.includes('already in progress')) {
+          setFeedback({ text: 'Agent analysis is currently in progress.', tone: 'ok' });
+          return;
+        }
+        throw err;
       }
     }, 'Agentic analysis completed. Review the evidence before applying any human decision.');
   }
@@ -889,7 +900,9 @@ function DetailDrawer({ complaint, token, onClose, onRefresh, onDeleted }) {
   // Automatically trigger agent pipeline for existing complaints with no agent results (Requirement 4)
   useEffect(() => {
     const cid = complaint.id;
-    const hasScore = complaint.agentic_priority_score != null || agenticRun?.priority_score != null;
+    if (agenticHistoryLoading) return;
+
+    const hasScore = complaint.agentic_priority_score != null || complaint.agentic_analysis != null || agenticRun?.priority_score != null;
     const hasHistory = agenticHistory.length > 0;
     const isBusy = busy === 'agents';
 
@@ -897,7 +910,7 @@ function DetailDrawer({ complaint, token, onClose, onRefresh, onDeleted }) {
       autoTriggeredRef.current.add(cid);
       runAgents();
     }
-  }, [complaint.id, complaint.agentic_priority_score, agenticRun, agenticHistory.length, busy]);
+  }, [complaint.id, complaint.agentic_priority_score, complaint.agentic_analysis, agenticRun, agenticHistory.length, agenticHistoryLoading, busy]);
 
   // Poll if status is RUNNING
   useEffect(() => {
@@ -1021,13 +1034,21 @@ function DetailDrawer({ complaint, token, onClose, onRefresh, onDeleted }) {
           {feedback ? (
             <div
               role="status"
-              className={`rounded-xl px-4 py-3 text-sm font-semibold border ${
+              className={`rounded-xl px-4 py-3 text-sm font-semibold border flex items-center justify-between gap-3 ${
                 feedback.tone === 'error'
                   ? 'bg-red-50 border-red-200 text-red-700'
                   : 'bg-emerald-50 border-emerald-200 text-emerald-700'
               }`}
             >
-              {feedback.text}
+              <span>{feedback.text}</span>
+              <button
+                type="button"
+                onClick={() => setFeedback(null)}
+                className="p-1 rounded hover:bg-black/5 text-current opacity-70 hover:opacity-100 shrink-0"
+                aria-label="Dismiss message"
+              >
+                <X className="w-4 h-4" />
+              </button>
             </div>
           ) : null}
 
