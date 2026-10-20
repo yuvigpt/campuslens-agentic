@@ -48,6 +48,7 @@ WhatsApp Image*.jpeg
 # ---------- AI tooling artifacts ----------
 .agents/
 .kombai/
+.opencode/
 skills-lock.json
 
 # ---------- local scratch Supabase verification ----------
