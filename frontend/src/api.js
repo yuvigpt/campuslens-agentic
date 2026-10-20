@@ -253,6 +253,10 @@ export function listAgentRuns(id, token) {
   return request(`/api/admin/complaints/${encodeURIComponent(id)}/agent-runs`, { token });
 }
 
+export function listRelatedComplaints(id, token) {
+  return request(`/api/admin/complaints/${encodeURIComponent(id)}/related`, { token });
+}
+
 /** PATCH /api/admin/complaints/{id}/status - body is exactly {"status": "..."} */
 export function updateStatus(id, status, token) {
   return request(`/api/admin/complaints/${encodeURIComponent(id)}/status`, {

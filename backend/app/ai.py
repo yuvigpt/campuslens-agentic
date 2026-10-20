@@ -82,6 +82,7 @@ def parse_analysis(payload: Any) -> dict[str, Any]:
     text_observation = payload.get("text_observation")
     conflict = payload.get("conflict")
     image_quality = payload.get("image_quality")
+    conflict_reason = payload.get("conflict_reason")
 
     urgency = _normalise_level(payload.get("urgency"))
     impact = _normalise_level(payload.get("impact"))
@@ -106,6 +107,8 @@ def parse_analysis(payload: Any) -> dict[str, Any]:
         clean["text_observation"] = text_observation.strip()[:1000]
     if isinstance(conflict, bool):
         clean["image_text_conflict"] = conflict
+    if isinstance(conflict_reason, str) and conflict_reason.strip():
+        clean["conflict_reason"] = conflict_reason.strip()[:1000]
     if isinstance(image_quality, str) and image_quality.strip().lower() in {"good", "poor", "unclear"}:
         clean["image_quality"] = image_quality.strip().lower()
     return clean
@@ -151,13 +154,9 @@ def analyse(*, description: str, image_bytes: Optional[bytes] = None,
         if image_bytes:
             mime = image_mime or "image/jpeg"
             parts.append({"inline_data": {"mime_type": mime, "data": image_bytes}})
-        try:
-            response = client.models.generate_content(model=model, contents=parts)
-        except Exception:
-            if model != DEFAULT_MODEL:
-                response = client.models.generate_content(model=DEFAULT_MODEL, contents=parts)
-            else:
-                raise
+        # Exactly one provider request: retries/fallback calls can duplicate
+        # billable work and make submission latency unpredictable.
+        response = client.models.generate_content(model=model, contents=parts)
         text = getattr(response, "text", None) or ""
     except Exception as exc:
         # 503, timeouts, quota errors and anything else collapse into one

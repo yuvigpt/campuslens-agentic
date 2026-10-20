@@ -183,7 +183,33 @@ def resolution(understanding_result: AgentObservation, safety_result: AgentObser
                "Cleanliness": "Dispatch housekeeping to inspect and restore the area.",
                "Infrastructure": "Inspect the affected facility and schedule the appropriate civil maintenance work."}
     return AgentObservation("resolution", confidence=0.84, evidence=["Action is a recommendation, not a completion claim"],
-                            output={"recommended_action": actions.get(category, "Route to the appropriate campus operations team for human assessment.")})
+                             output={"recommended_action": actions.get(category, "Route to the appropriate campus operations team for human assessment.")})
+
+
+def llm_analysis(analysis: Optional[dict[str, Any]]) -> Optional[AgentObservation]:
+    """Turn the optional provider response into an auditable observation.
+
+    Provider output is advisory.  In particular, its levels are deliberately
+    kept separate from the deterministic observations used by the scorer.
+    """
+    if not analysis:
+        return None
+    category = analysis.get("ai_category") or analysis.get("category")
+    summary = analysis.get("ai_summary") or analysis.get("summary")
+    levels = {
+        "urgency": analysis.get("ai_urgency") or analysis.get("urgency"),
+        "impact": analysis.get("ai_impact") or analysis.get("impact"),
+        "safety": analysis.get("ai_safety") or analysis.get("safety"),
+    }
+    levels = {key: value for key, value in levels.items() if value in LEVELS}
+    evidence = [str(analysis["ai_evidence"])] if analysis.get("ai_evidence") else []
+    uncertainty = [str(analysis["ai_uncertainty"])] if analysis.get("ai_uncertainty") else []
+    output = {"category": category, "summary": summary, **levels}
+    for key in ("image_observation", "text_observation", "image_text_conflict", "conflict", "conflict_reason", "image_quality"):
+        if analysis.get(key) is not None:
+            output[key] = analysis[key]
+    return AgentObservation("llm", confidence=0.65, evidence=evidence,
+                            uncertainty=uncertainty, output=output)
 
 
 def critic(observations: dict[str, AgentObservation], image_observation: Optional[dict[str, Any]] = None) -> AgentObservation:
@@ -192,6 +218,19 @@ def critic(observations: dict[str, AgentObservation], image_observation: Optiona
         warnings.append("Category is uncertain.")
     if observations.get("safety", AgentObservation("x")).output.get("safety_level") == "High" and observations.get("urgency", AgentObservation("x")).output.get("urgency_level") != "High":
         warnings.append("Safety and urgency disagree.")
+    llm = observations.get("llm")
+    if llm:
+        rule_category = observations.get("understanding", AgentObservation("x")).output.get("category")
+        llm_category = llm.output.get("category")
+        if llm_category and rule_category and llm_category != rule_category and llm_category != "Other" and rule_category != "Other":
+            warnings.append(f"LLM category ({llm_category}) disagrees with rule category ({rule_category}).")
+        for label, rule_key, llm_key in (("safety", "safety_level", "safety"), ("impact", "impact_level", "impact"), ("urgency", "urgency_level", "urgency")):
+            rule_value = observations.get(label, AgentObservation("x")).output.get(rule_key)
+            llm_value = llm.output.get(llm_key)
+            if llm_value and rule_value and llm_value != rule_value:
+                warnings.append(f"LLM {label} ({llm_value}) disagrees with rule {label} ({rule_value}).")
+        if llm.output.get("image_text_conflict") is True or llm.output.get("conflict") is True:
+            warnings.append(str(llm.output.get("conflict_reason") or "Image and complaint text describe materially different issues.")[:500])
     if image_observation:
         if image_observation.get("image_quality") in {"poor", "unclear"}:
             warnings.append("Image quality is insufficient for a reliable visual conclusion.")
@@ -215,8 +254,9 @@ def _run(name: str, fn: Callable[[], AgentObservation], timeout_seconds: float) 
 
 
 def orchestrate(*, description: str, location: str, candidates: Optional[list[dict[str, Any]]] = None,
-                image_available: bool = False, image_observation: Optional[dict[str, Any]] = None,
-                timeout_seconds: float = 5.0) -> dict[str, Any]:
+                 image_available: bool = False, image_observation: Optional[dict[str, Any]] = None,
+                 llm_analysis_result: Optional[dict[str, Any]] = None,
+                 timeout_seconds: float = 5.0) -> dict[str, Any]:
     """Run independent observations in parallel, then dependent agents."""
     candidates = candidates or []
     started = time.perf_counter()
@@ -232,6 +272,18 @@ def orchestrate(*, description: str, location: str, candidates: Optional[list[di
     route = _run("routing", lambda: routing(observations["understanding"], observations["safety"]), timeout_seconds)
     resolve = _run("resolution", lambda: resolution(observations["understanding"], observations["safety"], route), timeout_seconds)
     observations.update(routing=route, resolution=resolve)
+    llm_result = llm_analysis(llm_analysis_result)
+    if llm_result:
+        observations["llm"] = llm_result
+    else:
+        # The deterministic agents remain available as a safe fallback, but a
+        # missing provider observation is explicitly represented as failed so
+        # the UI never implies that the complete LLM-backed workflow ran.
+        observations["llm"] = AgentObservation(
+            "llm", status="FAILED", confidence=0.0,
+            uncertainty=["LLM analysis unavailable; human review required"],
+            error="provider_unavailable",
+        )
     observations["critic"] = _run("critic", lambda: critic(observations, image_observation), timeout_seconds)
     critic_result = observations["critic"]
     all_uncertainty = [u for result in observations.values() for u in result.uncertainty]
@@ -248,7 +300,7 @@ def orchestrate(*, description: str, location: str, candidates: Optional[list[di
         duplicate_count=observations["duplicate"].output.get("duplicate_count", 0),
     )
     return {
-        "run_id": str(uuid4()), "analysis_status": "completed" if not human_review else "completed_review_required",
+        "run_id": str(uuid4()), "analysis_status": "completed" if llm_result and not human_review else "failed_review_required",
         "category": category, "category_band": category_band,
         "summary": observations["understanding"].output.get("summary", description[:240]),
         "safety": observations["safety"].output.get("safety_level", "Low"),
@@ -264,7 +316,8 @@ def orchestrate(*, description: str, location: str, candidates: Optional[list[di
         "priority_score": priority["score"], "priority_band": priority["band"],
         "priority_breakdown": priority["breakdown"],
         "critic": critic_result.output,
-        "image_analysis": image_observation or {"image_available": image_available},
+         "image_analysis": image_observation or {"image_available": image_available},
+         "llm_analysis": llm_result.output if llm_result else None,
         "duration_ms": int((time.perf_counter() - started) * 1000),
         "agents": [result.to_dict() for result in observations.values()],
     }

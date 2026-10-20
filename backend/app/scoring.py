@@ -27,6 +27,7 @@ be unit-tested and reasoned about on its own.
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -87,6 +88,126 @@ SCORER_INPUTS: tuple[str, ...] = (
 
 class ScoringError(ValueError):
     """A score could not be produced. Never returns a partial or guessed value."""
+
+
+# ---------------------------------------------------------------------------
+# Related complaint scoring
+# ---------------------------------------------------------------------------
+_RELATED_STOPWORDS = frozenset(
+    "a an and are at in is of on the to with for from this that report reported complaint".split()
+)
+
+
+def _related_tokens(value: Any) -> set[str]:
+    return {
+        token for token in re.findall(r"[a-z0-9]+", str(value or "").lower())
+        if token not in _RELATED_STOPWORDS
+    }
+
+
+def _related_date(value: Any) -> Optional[datetime]:
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError):
+        return None
+
+
+def score_related_complaints(
+    target: dict[str, Any], candidates: list[dict[str, Any]], *, now: Optional[datetime] = None,
+    limit: int = 10,
+) -> dict[str, Any]:
+    """Rank active complaints related to ``target`` without mutating input.
+
+    Category disagreement is a hard exclusion when both rows have a category.
+    The remaining score is explainable and bounded: category (35), location /
+    building (30), recency (15), and description text (20). Missing fields do
+    not invent similarity; they simply contribute zero. The response contains
+    the top ``limit`` rows and the count of all qualifying relationships.
+    """
+    if limit < 1:
+        raise ValueError("limit must be positive")
+    reference = now or datetime.now(timezone.utc)
+    if reference.tzinfo is None:
+        reference = reference.replace(tzinfo=timezone.utc)
+    target_category = str(target.get("ai_category") or "").strip().casefold()
+    target_location = str(target.get("location_raw") or "").strip().casefold()
+    target_code = str(target.get("location_code") or "").strip().casefold()
+    target_text = _related_tokens(target.get("description"))
+    target_date = _related_date(target.get("created_at"))
+    related: list[dict[str, Any]] = []
+
+    for candidate in candidates:
+        if str(candidate.get("id")) == str(target.get("id")):
+            continue
+        if str(candidate.get("status") or "").strip().casefold() == "resolved":
+            continue
+        candidate_category = str(candidate.get("ai_category") or "").strip().casefold()
+        if target_category and candidate_category and target_category != candidate_category:
+            continue
+
+        score = 0.0
+        reasons: list[str] = []
+        if target_category and candidate_category and target_category == candidate_category:
+            score += 35
+            reasons.append("same category")
+
+        candidate_location = str(candidate.get("location_raw") or "").strip().casefold()
+        candidate_code = str(candidate.get("location_code") or "").strip().casefold()
+        if target_code and candidate_code and target_code == candidate_code:
+            score += 30
+            reasons.append("same location code")
+        elif target_location and candidate_location and target_location == candidate_location:
+            score += 25
+            reasons.append("same location")
+        elif target_location and candidate_location and (
+            target_location in candidate_location or candidate_location in target_location
+        ):
+            score += 15
+            reasons.append("same building/location")
+        else:
+            target_building = (target_location.split(",", 1)[0].strip().split() or [""])[0]
+            candidate_building = (candidate_location.split(",", 1)[0].strip().split() or [""])[0]
+            if target_building and target_building == candidate_building:
+                score += 10
+                reasons.append("same building")
+
+        candidate_date = _related_date(candidate.get("created_at"))
+        if target_date and candidate_date:
+            age_days = abs((reference - candidate_date).total_seconds()) / 86400
+            target_age_days = abs((reference - target_date).total_seconds()) / 86400
+            recency = max(0.0, 15.0 * (1.0 - min(90.0, max(age_days, target_age_days)) / 90.0))
+            score += recency
+            if recency >= 10:
+                reasons.append("recent reports")
+
+        candidate_text = _related_tokens(candidate.get("description"))
+        if target_text and candidate_text:
+            overlap = len(target_text & candidate_text) / len(target_text | candidate_text)
+            text_points = 20.0 * overlap
+            score += text_points
+            if overlap >= 0.2:
+                reasons.append("similar description")
+
+        if score > 0:
+            related.append({
+                "id": str(candidate.get("id")),
+                "score": round(score, 3),
+                "reasons": reasons,
+                "category": candidate.get("ai_category"),
+                "location": candidate.get("location_raw"),
+                "created_at": candidate.get("created_at"),
+                "status": candidate.get("status"),
+                "priority_band": band_for_score(float(candidate["priority_score"]))
+                if candidate.get("priority_score") is not None else None,
+            })
+
+    related.sort(key=lambda item: (-item["score"], item["id"]))
+    return {"total_count": len(related), "related": related[:limit]}
 
 
 def agentic_priority(*, safety: Any, impact: Any, urgency: Any,

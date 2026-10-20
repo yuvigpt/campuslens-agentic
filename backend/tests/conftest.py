@@ -126,6 +126,10 @@ class FakeConn:
                 "error_code": params[8],
             })
             return _Result([])
+        if "from public.agent_runs" in s:
+            rows = [r for r in self.store.agent_runs if str(r["complaint_id"]) == str(params[0])]
+            rows.sort(key=lambda r: r.get("created_at") or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
+            return _Result(rows[:1] if "limit 1" in s else rows)
         if "from public.profiles" in s:
             role = self.store.roles.get(params[0])
             if role is None:

@@ -148,6 +148,9 @@ class AdminComplaintOut(BaseModel):
     resolved_at: Optional[datetime] = None
     human_review_required: bool = False
     agentic_analysis: Optional[dict[str, Any]] = None
+    agentic_priority_score: Optional[float] = None
+    agentic_priority_band: Optional[str] = None
+    agentic_priority_breakdown: Optional[dict[str, Any]] = None
 
 
 class AdminAnalyticsOut(BaseModel):
@@ -162,6 +165,22 @@ class AdminAnalyticsOut(BaseModel):
     by_band: dict[str, int]
     unscored: int
     unresolved: int
+
+
+class RelatedComplaintOut(BaseModel):
+    id: str
+    score: float
+    reasons: list[str]
+    category: Optional[str] = None
+    location: Optional[str] = None
+    created_at: Optional[datetime] = None
+    status: Optional[str] = None
+    priority_band: Optional[str] = None
+
+
+class RelatedComplaintsOut(BaseModel):
+    total_count: int
+    related: list[RelatedComplaintOut]
 
 
 class ComplaintEventOut(BaseModel):

@@ -60,3 +60,40 @@ def test_image_text_conflict_requires_review():
     assert result["human_review_required"] is True
     assert result["critic"]["result"] == "HUMAN_REVIEW_REQUIRED"
     assert "socket hazard" in result["critic"]["warnings"][0]
+
+
+def test_llm_disagreement_is_reviewed_but_rule_priority_remains_authoritative():
+    result = orchestrate(
+        description="Electrical socket is producing sparks in a lecture hall.",
+        location="Hall 12 lecture hall",
+        llm_analysis_result={
+            "ai_category": "Plumbing",
+            "ai_summary": "The model saw a water issue.",
+            "ai_safety": "Low",
+            "ai_impact": "Low",
+            "ai_urgency": "Low",
+        },
+    )
+    assert result["category"] == "Electrical"
+    assert result["safety"] == "High"
+    assert result["priority_score"] == 100
+    assert result["human_review_required"] is True
+    assert any("LLM category" in warning for warning in result["critic"]["warnings"])
+    assert any("LLM safety" in warning for warning in result["critic"]["warnings"])
+
+
+def test_llm_image_text_conflict_is_reviewed():
+    result = orchestrate(
+        description="The ceiling fan is broken in Hall 12 A507.",
+        location="Hall 12 A507",
+        image_available=True,
+        llm_analysis_result={
+            "ai_category": "Furniture",
+            "image_observation": "Damaged electrical socket",
+            "text_observation": "Broken ceiling fan",
+            "image_text_conflict": True,
+            "conflict_reason": "Image suggests a socket hazard while text reports a fan.",
+        },
+    )
+    assert result["critic"]["result"] == "HUMAN_REVIEW_REQUIRED"
+    assert any("socket hazard" in warning for warning in result["critic"]["warnings"])

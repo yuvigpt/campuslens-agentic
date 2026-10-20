@@ -18,6 +18,7 @@ import {
   listAgentRuns,
   listComplaintEvents,
   listInvestigationNotes,
+  listRelatedComplaints,
   runAgenticAnalysis,
   updateStatus,
 } from '../api.js';
@@ -240,6 +241,16 @@ export default function DashboardPage({ view = 'overview', initialQuery = '' }) 
     setSelected(null);
     loadData();
     loadSummary();
+  }
+
+  async function openComplaint(complaint) {
+    setSelected(complaint);
+    try {
+      const detail = await getAdminComplaint(complaint.id, token);
+      if (detail && !Array.isArray(detail) && detail.id) setSelected(detail);
+    } catch {
+      // Keep the list snapshot usable if detail loading fails.
+    }
   }
 
   function resetFilters() {
@@ -618,7 +629,7 @@ export default function DashboardPage({ view = 'overview', initialQuery = '' }) 
                     {items.map((complaint) => (
                       <tr
                         key={complaint.id}
-                        onClick={() => setSelected(complaint)}
+                        onClick={() => openComplaint(complaint)}
                         className="hover:bg-slate-50/70 transition-colors cursor-pointer"
                       >
                         <td className="py-4 px-5">
@@ -654,7 +665,7 @@ export default function DashboardPage({ view = 'overview', initialQuery = '' }) 
                             type="button"
                             onClick={(event) => {
                               event.stopPropagation();
-                              setSelected(complaint);
+                               openComplaint(complaint);
                             }}
                             className="py-1.5 px-3 rounded-lg text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 transition-colors shadow-sm whitespace-nowrap"
                           >
@@ -729,6 +740,34 @@ export default function DashboardPage({ view = 'overview', initialQuery = '' }) 
  * The score form is PREFILLED from the admin-confirmed values, falling back to
  * the AI suggestion - but nothing is scored until this form is submitted.
  */
+function RelatedComplaints({ complaint, related }) {
+  const items = Array.isArray(related?.related) ? related.related : [];
+  return (
+    <section className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
+      <div className="flex items-baseline justify-between gap-3 mb-3">
+        <h3 className="text-sm font-bold uppercase tracking-wider text-slate-500 m-0">Related Complaints</h3>
+        <span className="text-xs font-semibold text-indigo-700">{related?.total_count || 0} unresolved related</span>
+      </div>
+      {items.length === 0 ? <p className="text-sm text-slate-400 italic m-0">No unresolved related complaints found.</p> : (
+        <>
+          <svg viewBox="0 0 520 190" className="w-full h-44 rounded-lg bg-slate-50 border border-slate-100" role="img" aria-label="Related complaint relationship graph">
+            {items.slice(0, 6).map((item, index) => {
+              const angle = (index / Math.max(1, Math.min(items.length, 6))) * Math.PI * 2 - Math.PI / 2;
+              const x = 260 + Math.cos(angle) * 170;
+              const y = 95 + Math.sin(angle) * 65;
+              return <g key={item.id}><line x1="260" y1="95" x2={x} y2={y} stroke="#a5b4fc" strokeWidth="2" /><text x={(260 + x) / 2} y={(95 + y) / 2 - 3} textAnchor="middle" fontSize="9" fill="#64748b">{item.reasons?.[0] || 'related'}</text><circle cx={x} cy={y} r="24" fill="#fff" stroke="#818cf8" /><text x={x} y={y + 3} textAnchor="middle" fontSize="9" fill="#312e81">{shortId(item.id).slice(-8)}</text></g>;
+            })}
+            <circle cx="260" cy="95" r="34" fill="#4f46e5" /><text x="260" y="92" textAnchor="middle" fontSize="10" fontWeight="700" fill="#fff">CURRENT</text><text x="260" y="105" textAnchor="middle" fontSize="9" fill="#e0e7ff">{shortId(complaint.id).slice(-8)}</text>
+          </svg>
+          <div className="mt-3 grid gap-2">
+            {items.map((item) => <div key={item.id} className="rounded-lg border border-slate-100 p-2 text-xs"><div className="flex justify-between gap-2"><strong>{shortId(item.id)}</strong><span className="text-indigo-700">{item.priority_band || 'Unscored'}</span></div><div className="text-slate-600">{item.category || 'Uncategorised'} · {item.location || 'Unknown location'} · {fmtDate(item.created_at)} · {item.status || 'Unknown'}</div><div className="text-slate-400 mt-1">{(item.reasons || []).join(' · ') || 'Related by score'}</div></div>)}
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
 function DetailDrawer({ complaint, token, onClose, onRefresh, onDeleted }) {
   const [events, setEvents] = useState([]);
   const [notes, setNotes] = useState([]);
@@ -737,6 +776,7 @@ function DetailDrawer({ complaint, token, onClose, onRefresh, onDeleted }) {
   const [feedback, setFeedback] = useState(null); // { text, tone: 'ok' | 'error' }
   const [agenticRun, setAgenticRun] = useState(null);
   const [agenticHistory, setAgenticHistory] = useState([]);
+  const [related, setRelated] = useState({ total_count: 0, related: [] });
 
   const [statusValue, setStatusValue] = useState(
     STATUSES.includes(complaint.status) ? complaint.status : STATUSES[0],
@@ -757,10 +797,11 @@ function DetailDrawer({ complaint, token, onClose, onRefresh, onDeleted }) {
 
   const loadTimeline = useCallback(async () => {
     setTimelineError(null);
-    const [eventsResult, notesResult, runsResult] = await Promise.allSettled([
+    const [eventsResult, notesResult, runsResult, relatedResult] = await Promise.allSettled([
       listComplaintEvents(complaint.id, token),
       listInvestigationNotes(complaint.id, token),
       listAgentRuns(complaint.id, token),
+      listRelatedComplaints(complaint.id, token),
     ]);
     setEvents(
       eventsResult.status === 'fulfilled' && Array.isArray(eventsResult.value)
@@ -775,7 +816,12 @@ function DetailDrawer({ complaint, token, onClose, onRefresh, onDeleted }) {
     setAgenticHistory(
       runsResult.status === 'fulfilled' && Array.isArray(runsResult.value) ? runsResult.value : [],
     );
-    if (eventsResult.status === 'rejected' || notesResult.status === 'rejected' || runsResult.status === 'rejected') {
+    setRelated(
+      relatedResult.status === 'fulfilled' && relatedResult.value
+        ? relatedResult.value
+        : { total_count: 0, related: [] },
+    );
+    if (eventsResult.status === 'rejected' || notesResult.status === 'rejected' || runsResult.status === 'rejected' || relatedResult.status === 'rejected') {
       setTimelineError('The audit trail or the notes could not be loaded.');
     }
   }, [complaint.id, token]);
@@ -868,6 +914,12 @@ function DetailDrawer({ complaint, token, onClose, onRefresh, onDeleted }) {
           points: breakdown[key].points,
           max: breakdown[key].max,
         }))
+    : [];
+  const agenticBreakdown = complaint.agentic_priority_breakdown || null;
+  const agenticRows = agenticBreakdown
+    ? ['safety', 'impact', 'urgency', 'category', 'duplicates']
+      .filter((key) => agenticBreakdown[key])
+      .map((key) => ({ key, value: agenticBreakdown[key] }))
     : [];
 
   return (
@@ -1000,14 +1052,36 @@ function DetailDrawer({ complaint, token, onClose, onRefresh, onDeleted }) {
                 ) : null}
               </div>
             ) : null}
-          </section>
+           </section>
+          {complaint.agentic_priority_score != null ? (
+            <section className="bg-indigo-50 rounded-xl border border-indigo-200 shadow-sm p-5">
+              <h3 className="text-sm font-bold uppercase tracking-wider text-indigo-700 m-0 mb-1">
+                Deterministic explainable agentic priority
+              </h3>
+              <div className="flex items-baseline justify-between gap-3">
+                <strong className="text-2xl text-slate-900">Agentic Priority Score</strong>
+                <span className="font-mono text-xl font-extrabold text-indigo-800">
+                  {complaint.agentic_priority_score} / 100
+                </span>
+              </div>
+              <p className="text-sm text-slate-600 mt-1 mb-3">Band: <strong>{complaint.agentic_priority_band}</strong></p>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs">
+                {agenticRows.map(({ key, value }) => (
+                  <div key={key} className="rounded-lg bg-white border border-indigo-100 p-2">
+                    <div className="font-semibold text-slate-600 capitalize">{key === 'duplicates' ? 'Duplicate / recurrence' : key}</div>
+                    <div className="text-slate-900 mt-1">{value.level || value.band || (value.boost != null ? `+${value.boost}` : value.points)} · {value.points ?? value.boost ?? 0} pts</div>
+                  </div>
+                ))}
+              </div>
+            </section>
+          ) : null}
 
           {/* AI analysis */}
           <section className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
             <div className="flex items-center justify-between gap-3 mb-3">
               <h3 className="text-sm font-bold uppercase tracking-wider text-slate-500 m-0">AI analysis</h3>
               <button type="button" onClick={runAgents} disabled={busy === 'agents'} className="text-xs font-semibold text-indigo-700 border border-indigo-200 rounded-lg px-2.5 py-1.5 hover:bg-indigo-50 disabled:opacity-50">
-                {busy === 'agents' ? 'Running…' : 'Run agent pipeline'}
+                 {busy === 'agents' ? 'Running…' : 'Rerun agent pipeline'}
               </button>
             </div>
             {complaint.ai_summary || complaint.ai_category ? (
@@ -1068,13 +1142,15 @@ function DetailDrawer({ complaint, token, onClose, onRefresh, onDeleted }) {
               const result = agenticRun ? run : (run.result || {});
               const steps = agenticRun ? (run.agents || []) : (run.steps || []);
               return <div className="mt-4 rounded-xl border border-indigo-100 bg-indigo-50/50 p-3 text-xs">
-                <div className="flex justify-between gap-3 font-semibold text-slate-700"><span>Agentic result</span><span>{result.priority_score ?? '—'} · {result.priority_band ?? run.status}</span></div>
+                 <div className="flex justify-between gap-3 font-semibold text-slate-700"><span>Hybrid agentic analysis</span><span>{result.priority_score ?? '—'} · {result.priority_band ?? run.status}</span></div>
+                 <p className="mt-1 text-slate-600">LLM Analysis is validated by deterministic specialist agents, a critic, and the deterministic priority engine. This is one structured provider observation, not eight separate Gemini calls.</p>
                 <p className="mt-1 text-slate-600">{result.department || 'Department pending'} · {result.duplicate_count ?? '—'} similar report(s) · confidence {result.confidence ?? run.confidence ?? '—'}</p>
                 <ol className="mt-2 grid sm:grid-cols-2 gap-1.5">{steps.map((item) => <li key={item.agent || item.agent_name} className="bg-white rounded px-2 py-1 flex justify-between"><span className="capitalize">{item.agent || item.agent_name}</span><strong>{item.status}</strong></li>)}</ol>
                 {(result.human_review_required || run.human_review_required) ? <p className="mt-2 font-semibold text-amber-800">Human review recommended.</p> : null}
               </div>;
             })() : null}
           </section>
+          <RelatedComplaints complaint={complaint} related={related} />
           {/* ACTIONS: status, score, publish, delete */}
           <section className="bg-white rounded-xl border border-slate-200 shadow-sm p-5 flex flex-col gap-5">
             <h3 className="text-sm font-bold uppercase tracking-wider text-slate-500 m-0">Actions</h3>

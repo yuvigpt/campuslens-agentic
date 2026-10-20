@@ -21,6 +21,7 @@ Authorisation notes
 
 from __future__ import annotations
 
+import json
 import logging
 import uuid
 from typing import Any, Optional
@@ -52,6 +53,7 @@ from ..schemas import (
     NoteIn,
     PublicApprovalIn,
     PublicComplaintOut,
+    RelatedComplaintsOut,
     StatusUpdateIn,
     StudentComplaintOut,
     SubmitOut,
@@ -160,7 +162,7 @@ def _student_out(
     )
 
 
-def _admin_out(row: dict, image_url: Optional[str]) -> AdminComplaintOut:
+def _admin_out(row: dict, image_url: Optional[str], agentic_result: Optional[dict[str, Any]] = None) -> AdminComplaintOut:
     """Map a database row onto the ADMIN model (scores included)."""
     return AdminComplaintOut(
         id=_sid(row["id"]),
@@ -192,6 +194,10 @@ def _admin_out(row: dict, image_url: Optional[str]) -> AdminComplaintOut:
         created_at=row.get("created_at"),
         updated_at=row.get("updated_at"),
         resolved_at=row.get("resolved_at"),
+        agentic_analysis=agentic_result,
+        agentic_priority_score=agentic_result.get("priority_score") if agentic_result else None,
+        agentic_priority_band=agentic_result.get("priority_band") if agentic_result else None,
+        agentic_priority_breakdown=agentic_result.get("priority_breakdown") if agentic_result else None,
     )
 
 
@@ -492,6 +498,7 @@ async def submit_complaint(
                 location=location,
                 image_available=bool(image_bytes),
                 image_observation=visual_observation or None,
+                llm_analysis_result=suggestion or None,
             )
             fallback = {
                 "ai_category": agentic_result.get("category"),
@@ -758,15 +765,53 @@ async def get_admin_complaint(
 ) -> AdminComplaintOut:
     _validate_complaint_id(complaint_id)
     settings = _settings(request)
+    latest_run = None
     try:
         with database.session(settings.database_url, identity) as conn:
             row = database.get_complaint(conn, complaint_id)
+            if row is not None:
+                latest_run = database.get_latest_agentic_run(conn, complaint_id)
     except database.DatabaseError:
         raise HTTPException(503, "Could not load the complaint.") from None
     if row is None:
         raise HTTPException(404, "Complaint not found.")
     image_url = await _signed_image(settings, row, identity)
-    return _admin_out(row, image_url)
+    # A failed run may contain partial observations, but it is not an
+    # authoritative priority source. Preserve the complaint's legacy fields
+    # and expose agentic priority only from a completed persisted run.
+    latest_result = latest_run.get("result") if latest_run and latest_run.get("status") == "COMPLETED" else None
+    if isinstance(latest_result, str):
+        try:
+            latest_result = json.loads(latest_result)
+        except (TypeError, ValueError):
+            latest_result = None
+    return _admin_out(row, image_url, latest_result if isinstance(latest_result, dict) else None)
+
+
+@router.get(
+    "/admin/complaints/{complaint_id}/related",
+    response_model=RelatedComplaintsOut,
+    summary="Find active related complaints (admin only)",
+)
+async def related_complaints(
+    request: Request,
+    complaint_id: str,
+    identity: database.Identity = Depends(current_admin),
+) -> RelatedComplaintsOut:
+    """Return explainably ranked, unresolved candidates for one complaint."""
+    _validate_complaint_id(complaint_id)
+    settings = _settings(request)
+    try:
+        with database.session(settings.database_url, identity) as conn:
+            target = database.get_complaint(conn, complaint_id)
+            if target is None:
+                raise HTTPException(404, "Complaint not found.")
+            candidates = database.list_complaints(
+                conn, student_id=None, sort="newest", limit=500, offset=0, open_only=True
+            )
+    except database.DatabaseError:
+        raise HTTPException(503, "Could not load related complaints.") from None
+    return RelatedComplaintsOut(**scoring.score_related_complaints(target, candidates))
 
 
 @router.post(
@@ -790,11 +835,20 @@ async def run_agentic_analysis(
         raise HTTPException(503, "Could not load the complaint for analysis.") from None
     if row is None:
         raise HTTPException(404, "Complaint not found.")
+    llm_suggestion: dict[str, Any] = {}
+    if settings.ai_enabled and ai.is_configured():
+        try:
+            llm_suggestion = ai.analyse(description=row["description"])
+        except ai.AnalysisUnavailable as exc:
+            logger.info("AI rerun unavailable (%s)", exc.kind)
+        except Exception:
+            logger.warning("AI rerun failed", exc_info=True)
     result = agentic.orchestrate(
         description=row["description"],
         location=row["location_raw"],
         candidates=candidates,
         image_available=bool(row.get("image_path")),
+        llm_analysis_result=llm_suggestion or None,
     )
     _persist_agentic_result(settings, identity, complaint_id, result)
     return {"complaint_id": complaint_id, **result}

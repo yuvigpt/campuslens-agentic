@@ -750,6 +750,24 @@ def list_agentic_runs(conn: Any, complaint_id: str, limit: int = 20) -> list[dic
     return output
 
 
+def get_latest_agentic_run(conn: Any, complaint_id: str) -> Optional[dict[str, Any]]:
+    """Return the latest persisted run result for an admin detail response."""
+    row = conn.execute(
+        """
+        SELECT id, status, duration_ms, confidence, human_review_required, result,
+               created_at, completed_at
+          FROM public.agent_runs
+         WHERE complaint_id = %s
+         ORDER BY created_at DESC
+         LIMIT 1
+        """,
+        (complaint_id,),
+    ).fetchone()
+    if not row:
+        return None
+    return dict(row)
+
+
 # ---------------------------------------------------------------------------
 # Public feed (no authentication; only approved rows)
 # ---------------------------------------------------------------------------

@@ -36,6 +36,12 @@ const ROW = {
   created_at: '2026-01-04T09:00:00Z',
   updated_at: null,
   resolved_at: null,
+  agentic_priority_score: 88,
+  agentic_priority_band: 'Critical',
+  agentic_priority_breakdown: {
+    safety: { level: 'High', points: 40, max: 40 },
+    total: 88,
+  },
 };
 
 const SUMMARY = {
@@ -82,6 +88,10 @@ async function mountDashboard(view) {
     if (href.includes('/analytics/summary')) return jsonResponse(200, SUMMARY);
     if (href.includes('/events')) return jsonResponse(200, []);
     if (href.includes('/notes')) return jsonResponse(200, []);
+    if (href.includes('/related')) return jsonResponse(200, {
+      total_count: 1,
+      related: [{ id: 'related-2222', score: 82, reasons: ['same category'], category: 'Electrical', location: 'Science Block', created_at: '2026-01-03T09:00:00Z', status: 'Reported', priority_band: 'High' }],
+    });
     if (href.includes('/api/admin/complaints')) return jsonResponse(200, [ROW]);
     return jsonResponse(200, []);
   });
@@ -201,6 +211,12 @@ describe('Operations dashboard', () => {
     expect(
       app.screen.getByText('Light fixture flickering consistently near the door.'),
     ).toBeTruthy();
+    expect(app.screen.getByText('Agentic Priority Score')).toBeTruthy();
+    expect(app.screen.getByText('88 / 100')).toBeTruthy();
+    expect(app.screen.getByText('Related Complaints')).toBeTruthy();
+    expect(app.screen.getByText(/1 unresolved related/i)).toBeTruthy();
+    expect(app.screen.getByRole('img', { name: /relationship graph/i })).toBeTruthy();
+    expect(app.screen.getByRole('button', { name: /rerun agent pipeline/i })).toBeTruthy();
     expect(app.screen.getByText('Audit trail')).toBeTruthy();
     expect(app.screen.getByText('Investigation notes')).toBeTruthy();
     expect(app.screen.getByText('Confirm scoring inputs')).toBeTruthy();
