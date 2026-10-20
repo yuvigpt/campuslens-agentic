@@ -20,7 +20,7 @@ export default function Footer({ onOpenMap }) {
                   CampusLens
                 </span>
                 <span className="text-[10px] text-indigo-600 font-semibold tracking-wide">
-                  IIT Kanpur Official Portal
+                  Made by IIT Kanpur student
                 </span>
               </div>
             </a>

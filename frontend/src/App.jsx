@@ -65,10 +65,32 @@ function Shell() {
     }
   });
 
-  // When a visitor opens the app without an active session on root/home, default to signup
+  // Active route matching. The hash may carry a query string
+  // (#/triage?q=leak) which is stripped here and parsed into `routeParams`
+  // for the pages that consume it.
+  const [currentPath, currentQueryString = ''] = (hash || '#/').split('?');
+  const routeParams = new URLSearchParams(currentQueryString);
+  const isDashboard =
+    currentPath.startsWith('#/dashboard') || currentPath.startsWith('#/triage');
+  const isSignInView = hash === '#/signin' || hash === '#/signup';
+
+  // Navigation and auth guards:
+  // - First-time / logged-out visitor: redirect to #/signup on root or protected routes
+  // - Authenticated visitor: automatically detect previous login from session storage and stay on home/app
   useEffect(() => {
-    if (!loading && !token && (hash === '' || hash === '#/' || hash === '#/home')) {
-      window.location.hash = '#/signup';
+    if (!loading && !token) {
+      if (
+        hash === '' ||
+        hash === '#/' ||
+        hash === '#/home' ||
+        hash.startsWith('#/dashboard') ||
+        hash.startsWith('#/triage') ||
+        hash.startsWith('#/submit') ||
+        hash.startsWith('#/mine') ||
+        hash.startsWith('#/profile')
+      ) {
+        window.location.hash = '#/signup';
+      }
     }
   }, [loading, token, hash]);
 
@@ -189,15 +211,7 @@ function Shell() {
     return clean.charAt(0).toUpperCase() + clean.slice(1);
   })();
 
-  const isSignInView = hash === '#/signin' || hash === '#/signup';
 
-  // Active route matching. The hash may carry a query string
-  // (#/triage?q=leak) which is stripped here and parsed into `routeParams`
-  // for the pages that consume it.
-  const [currentPath, currentQueryString = ''] = (hash || '#/').split('?');
-  const routeParams = new URLSearchParams(currentQueryString);
-  const isDashboard =
-    currentPath.startsWith('#/dashboard') || currentPath.startsWith('#/triage');
 
   // Student Navigation Items (User Portal)
   const studentNavItems = [

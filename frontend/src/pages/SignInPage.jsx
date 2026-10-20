@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { User, Mail, Lock, Eye, EyeOff, ArrowRight, Loader2, ChevronDown, Sparkles } from 'lucide-react';
 
 import { useAuth } from '../auth.jsx';
@@ -8,23 +8,12 @@ import { IITKLogo, GoogleLogo, CampusLensIcon } from '../components/BrandIcons.j
 // Authorized admin emails that can unlock the Faculty and Campus Administrator portals
 const AUTHORIZED_ADMIN_EMAILS = [
   'yuvrajkrgupta87@gmail.com',
-  'admin@iitk.ac.in',
-  'campuslens.admin@gmail.com',
-  'director@iitk.ac.in',
 ];
 
 export function isAuthorizedAdminEmail(emailStr) {
   if (!emailStr) return false;
   const clean = emailStr.trim().toLowerCase();
-  const configuredAdmin = (import.meta.env.VITE_ADMIN_EMAIL || '').trim().toLowerCase();
-  if (configuredAdmin && clean === configuredAdmin) return true;
-  return (
-    AUTHORIZED_ADMIN_EMAILS.includes(clean) ||
-    clean.startsWith('admin@') ||
-    clean.includes('admin') ||
-    clean.startsWith('director@') ||
-    clean.startsWith('dean@')
-  );
+  return clean === 'yuvrajkrgupta87@gmail.com';
 }
 
 /**
@@ -43,6 +32,15 @@ export default function SignInPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [info, setInfo] = useState(null);
+
+  useEffect(() => {
+    function handleHash() {
+      setMode(window.location.hash === '#/signin' ? 'signin' : 'signup');
+    }
+    window.addEventListener('hashchange', handleHash);
+    handleHash();
+    return () => window.removeEventListener('hashchange', handleHash);
+  }, []);
 
   const isStaffAdmin = isAuthorizedAdminEmail(email);
 
@@ -169,7 +167,7 @@ export default function SignInPage() {
         <div className="relative z-10 max-w-lg my-12 lg:my-auto">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-500/25 text-indigo-200 border border-indigo-400/30 text-xs font-semibold mb-4 backdrop-blur-md">
             <Sparkles className="w-3.5 h-3.5 text-indigo-300" />
-            <span>Official Student &amp; Campus Portal</span>
+            <span>Made by IIT Kanpur student</span>
           </div>
 
           <h1 className="text-3xl sm:text-4xl lg:text-5xl font-black text-white tracking-tight leading-[1.12] mb-4 drop-shadow-md">

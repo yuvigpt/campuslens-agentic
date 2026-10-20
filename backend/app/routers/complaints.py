@@ -760,16 +760,19 @@ async def list_all_complaints(
             )
             runs_by_id = {}
             for r in rows:
-                run = database.get_latest_agentic_run(conn, r["id"])
-                if run and run.get("status") == "COMPLETED":
-                    res = run.get("result")
-                    if isinstance(res, str):
-                        try:
-                            res = json.loads(res)
-                        except (TypeError, ValueError):
-                            res = None
-                    if isinstance(res, dict):
-                        runs_by_id[r["id"]] = res
+                try:
+                    run = database.get_latest_agentic_run(conn, r["id"])
+                    if run and run.get("status") == "COMPLETED":
+                        res = run.get("result")
+                        if isinstance(res, str):
+                            try:
+                                res = json.loads(res)
+                            except (TypeError, ValueError):
+                                res = None
+                        if isinstance(res, dict):
+                            runs_by_id[r["id"]] = res
+                except Exception:
+                    pass
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from None
     except database.DatabaseError:
